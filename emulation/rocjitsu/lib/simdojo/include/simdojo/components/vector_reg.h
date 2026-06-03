@@ -9,6 +9,7 @@
 
 #include "util/bit.h"
 #include "util/meta_programming.h"
+#include "util/simd.h"
 
 #include <array>
 #include <cstddef>
@@ -40,6 +41,26 @@ public:
 
   VecElem operator[](size_t idx) const { return data_[idx]; }
   VecElem &operator[](size_t idx) { return data_[idx]; }
+
+  /// SIMD load of `native<T>` from W contiguous lanes starting at `lane_base`.
+  /// The storage pointer never escapes the object. T is a 32-bit lane type.
+  template <typename T> util::native<T> simd_load(size_t lane_base) const {
+    static_assert(sizeof(T) == sizeof(VecElem), "simd_load: T must match element width");
+    return util::load<T>(reinterpret_cast<const uint32_t *>(&data_[lane_base]));
+  }
+
+  /// Masked SIMD store of `v` into W contiguous lanes at `lane_base`; bit i of
+  /// `mask` enables lane `lane_base + i`.
+  template <typename T> void simd_store(size_t lane_base, util::native<T> v, uint64_t mask) {
+    static_assert(sizeof(T) == sizeof(VecElem), "simd_store: T must match element width");
+    util::masked_store<T>(reinterpret_cast<uint32_t *>(&data_[lane_base]), v, mask);
+  }
+
+  /// Contiguous storage pointer (lane 0). The register file is reg-major
+  /// contiguous, so for a multi-register tile this base indexes adjacent
+  /// registers at `r * NUM_ELEMS + lane`. Used by the 64-bit pair gather/scatter.
+  const VecElem *lane_data() const { return data_.data(); }
+  VecElem *lane_data() { return data_.data(); }
 
   template <size_t OtherN, typename OtherVecElem>
     requires(num_elems_ == VectorReg<OtherN, OtherVecElem>::num_elems_)
