@@ -232,7 +232,6 @@ class CodeGenerator:
                             "*inst",
                         ),
                         cgen.Value("ExecuteFn", "exec_fn"),
-                        cgen.Value("ExecuteFn", "scalar_exec_fn"),
                     ],
                 ),
             ]
@@ -311,16 +310,16 @@ class CodeGenerator:
                 # string_view in Instruction doesn't dangle.
                 class_ctor_impl = (
                     f"{inst_enc.fmt_enc_name}::{inst_enc.fmt_enc_name}"
-                    f"(std::string_view mnemonic, const {inst_enc.fmt_enc_name}MachineInst *inst, ExecuteFn exec_fn, ExecuteFn scalar_exec_fn) "
-                    f': IsaInstruction<Isa>("", exec_fn, scalar_exec_fn), inst_(*inst), '
+                    f"(std::string_view mnemonic, const {inst_enc.fmt_enc_name}MachineInst *inst, ExecuteFn exec_fn) "
+                    f': IsaInstruction<Isa>("", exec_fn), inst_(*inst), '
                     f"owned_mnemonic_({mnemonic_expr}) "
                     f"{{ mnemonic_ = owned_mnemonic_;{size_line}}}"
                 )
             else:
                 class_ctor_impl = (
                     f"{inst_enc.fmt_enc_name}::{inst_enc.fmt_enc_name}"
-                    f"(std::string_view mnemonic, const {inst_enc.fmt_enc_name}MachineInst *inst, ExecuteFn exec_fn, ExecuteFn scalar_exec_fn) "
-                    f": IsaInstruction<Isa>({mnemonic_expr}, exec_fn, scalar_exec_fn), inst_(*inst) "
+                    f"(std::string_view mnemonic, const {inst_enc.fmt_enc_name}MachineInst *inst, ExecuteFn exec_fn) "
+                    f": IsaInstruction<Isa>({mnemonic_expr}, exec_fn), inst_(*inst) "
                     f"{{{size_line}}}"
                 )
             class_func_impls.append(cgen.Line(class_ctor_impl))
@@ -2463,11 +2462,6 @@ class CodeGenerator:
                     public_members.append(
                         cgen.Statement("void execute_impl(amdgpu::Wavefront &wf)")
                     )
-                    public_members.append(
-                        cgen.Statement(
-                            "void scalar_execute_impl(amdgpu::Wavefront &wf)"
-                        )
-                    )
                     # CFG metadata is emitted on the concrete ISA instruction
                     # class, not inferred by generic analysis from mnemonic
                     # strings. BasicBlock asks the virtual branch_offset_bytes()
@@ -2497,8 +2491,7 @@ class CodeGenerator:
                     init_list_parts = [
                         f'{inst.fmt_true_enc_name}("{full_mnemonic}", '
                         f"reinterpret_cast<const OpEncoding*>(inst), "
-                        f"make_exec_fn<{inst.fmt_name}>(), "
-                        f"make_scalar_exec_fn<{inst.fmt_name}>())"
+                        f"make_exec_fn<{inst.fmt_name}>())"
                     ] + opnd_ctor_init
                     init_list = ", ".join(init_list_parts)
                     # Check if this is a memory instruction to set MEMORY_OP flag
@@ -3004,10 +2997,6 @@ class CodeGenerator:
                                 f"void {inst.fmt_name}::execute_impl"
                                 f"(amdgpu::Wavefront &wf) {{ (void)wf; throw util::UnimplementedInst(mnemonic()); }}"
                             )
-                            scalar_exec_impl = cgen.Line(
-                                f"void {inst.fmt_name}::scalar_execute_impl"
-                                f"(amdgpu::Wavefront &wf) {{ (void)wf; throw util::UnimplementedInst(mnemonic()); }}"
-                            )
                         elif can_share or _portable_probe:
                             enc_key = enc.enc_name.lower().replace("enc_", "")
                             tmpl_name = f"{inst.mnemonic}_{enc_key}"
@@ -3016,14 +3005,6 @@ class CodeGenerator:
                                 f"(amdgpu::Wavefront &wf) {{\n"
                                 f"{_dpp_preamble}"
                                 f"  amdgpu::execute_{tmpl_name}(*this, wf);\n"
-                                f"{_dpp_cleanup}"
-                                f"{_sdwa_postamble}}}"
-                            )
-                            scalar_exec_impl = cgen.Line(
-                                f"void {inst.fmt_name}::scalar_execute_impl"
-                                f"(amdgpu::Wavefront &wf) {{\n"
-                                f"{_dpp_preamble}"
-                                f"  amdgpu::scalar_execute_{tmpl_name}(*this, wf);\n"
                                 f"{_dpp_cleanup}"
                                 f"{_sdwa_postamble}}}"
                             )
@@ -3068,21 +3049,9 @@ class CodeGenerator:
                                 f"{_dpp_cleanup}"
                                 f"{_sdwa_postamble}}}"
                             )
-                            scalar_exec_impl = cgen.Line(
-                                f"void {inst.fmt_name}::scalar_execute_impl"
-                                f"(amdgpu::Wavefront &wf) {{\n"
-                                f"{_dpp_preamble}"
-                                f"{body}\n"
-                                f"{_dpp_cleanup}"
-                                f"{_sdwa_postamble}}}"
-                            )
                     else:
                         exec_impl = cgen.Line(
                             f"void {inst.fmt_name}::execute_impl"
-                            f"(amdgpu::Wavefront &wf) {{ (void)wf; throw util::UnimplementedInst(mnemonic()); }}"
-                        )
-                        scalar_exec_impl = cgen.Line(
-                            f"void {inst.fmt_name}::scalar_execute_impl"
                             f"(amdgpu::Wavefront &wf) {{ (void)wf; throw util::UnimplementedInst(mnemonic()); }}"
                         )
 
@@ -3105,7 +3074,6 @@ class CodeGenerator:
                             )
                         )
                     class_func_impls.append(exec_impl)
-                    class_func_impls.append(scalar_exec_impl)
 
                 # Build include lists for .cpp files
                 cpp_includes = [
@@ -3474,22 +3442,13 @@ class CodeGenerator:
         for mnemonic, prefixed_body, sem_class in entries:
             lines.append("template <typename Inst>")
             lines.append(
-                f"inline void scalar_execute_{mnemonic}("
-                f"[[maybe_unused]] Inst &inst, [[maybe_unused]] Wavefront &wf) {{"
-            )
-            lines.append(prefixed_body)
-            lines.append("}")
-            lines.append("")
-
-            lines.append("template <typename Inst>")
-            lines.append(
                 f"inline void execute_{mnemonic}("
                 f"[[maybe_unused]] Inst &inst, [[maybe_unused]] Wavefront &wf) {{"
             )
             probe = simd_probe_line(mnemonic)
             if probe is not None:
                 lines.append(probe)
-            lines.append(f"  scalar_execute_{mnemonic}(inst, wf);")
+            lines.append(prefixed_body)
             lines.append("}")
             lines.append("")
 
