@@ -6,12 +6,10 @@
 /// VOP2 binary instructions wired into SIMD_VOP2_BINARY. Each op runs TWICE in
 /// the same process -- once forcing the scalar body, once the SIMD fast path,
 /// with identical seed/inputs/EXEC -- and the two 64-lane result arrays are
-/// asserted equal with EXPECT_EQ (util::set_force_scalar_for_testing flips the
+/// asserted equal with EXPECT_EQ (cu->scalar_execute_instruction selects the
 /// gate in-process; the prior two-process file-dump diff is no longer needed
 /// here). In-process the test also checks inactive-lane preservation under full
 /// and partial EXEC masks.
-
-#include "util/simd_test_hooks.h"
 
 #include "rocjitsu/code/rj_code.h"
 #include "rocjitsu/isa/arch/amdgpu/shared/execute_shared.h"
@@ -98,12 +96,15 @@ struct Fixture {
   }
 
   // Runs the instruction in the process's current execute mode (SIMD or
-  // scalar, selected by util::force_scalar()). The caller flips the gate
+  // scalar, selected by the scalar_only parameter). The caller picks the path
   // between two calls with identical seed/inputs to compare the paths.
-  std::array<uint32_t, WF_SIZE> run(Instruction *inst, uint64_t seed, bool is_float,
-                                    uint64_t exec) {
+  std::array<uint32_t, WF_SIZE> run(Instruction *inst, uint64_t seed, bool is_float, uint64_t exec,
+                                    bool scalar_only) {
     seed_inputs(seed, is_float, exec);
-    cu->execute_instruction(inst, *wf);
+    if (scalar_only)
+      cu->scalar_execute_instruction(inst, *wf);
+    else
+      cu->execute_instruction(inst, *wf);
     return snapshot_dst();
   }
 };
@@ -163,16 +164,7 @@ const Vop2Case kCases[] = {
     // not SIMD-bit-reproducible on signed zero / NaN (see simd_codegen.py).
 };
 
-// Restores the process force-scalar gate on scope exit so flipping it for an
-// in-process A/B comparison cannot leak into later tests in the same process.
-struct ForceScalarGuard {
-  bool orig;
-  ForceScalarGuard() : orig(util::force_scalar()) {}
-  ~ForceScalarGuard() { util::set_force_scalar_for_testing(orig); }
-};
-
 void check_case(const Vop2Case &c, uint64_t exec) {
-  ForceScalarGuard gate_guard;
 
   constexpr uint64_t SEED = 0xC0FFEE'1234'5678ULL;
 
@@ -182,7 +174,6 @@ void check_case(const Vop2Case &c, uint64_t exec) {
   // v_max_f16/v_min_f16 mean every active lane is bit-reproducible, so no
   // per-lane NaN skip is needed -- the full 64-lane arrays must match.
   auto run_mode = [&](bool force_scalar) -> std::array<uint32_t, WF_SIZE> {
-    util::set_force_scalar_for_testing(force_scalar);
     Fixture fx;
     EXPECT_NE(fx.cu, nullptr);
     EXPECT_NE(fx.wf, nullptr);
@@ -190,7 +181,7 @@ void check_case(const Vop2Case &c, uint64_t exec) {
     uint32_t words[4] = {enc, 0u, 0u, 0u};
     Instruction *inst = fx.decoder->decode(words);
     EXPECT_NE(inst, nullptr) << c.label << ": decode failed";
-    auto out = fx.run(inst, SEED, c.is_float, exec);
+    auto out = fx.run(inst, SEED, c.is_float, exec, force_scalar);
     delete inst;
     return out;
   };

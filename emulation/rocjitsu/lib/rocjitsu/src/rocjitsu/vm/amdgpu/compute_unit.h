@@ -406,6 +406,10 @@ public:
   /// @param wf The wavefront executing the instruction.
   virtual void execute_instruction(Instruction *inst, Wavefront &wf) = 0;
 
+  void scalar_execute_instruction(Instruction *inst, Wavefront &wf) {
+    inst->scalar_execute(*inst, &wf);
+  }
+
   /// @brief Reset all wavefront slots to halted state.
   ///
   /// Frees all register allocations and resets every slot.  Used by the

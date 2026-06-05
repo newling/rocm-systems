@@ -19,10 +19,8 @@
 /// identical in both runs, so both runs skip the same lanes). Each op runs TWICE
 /// in the same process -- once forcing the scalar body, once the SIMD fast path,
 /// with identical seed/inputs/EXEC -- and the two result arrays are asserted
-/// equal per active, non-skipped lane (util::set_force_scalar_for_testing flips
-/// the gate in-process).
-
-#include "util/simd_test_hooks.h"
+/// equal per active, non-skipped lane (cu->scalar_execute_instruction selects the scalar path
+/// the path in-process).
 
 #include "rocjitsu/code/rj_code.h"
 #include "rocjitsu/isa/arch/amdgpu/shared/execute_shared.h"
@@ -162,16 +160,7 @@ const FmaCase kCases[] = {
     {"v_madmk_f16", 36, true, true},  // f16 literal multiplier
 };
 
-// Restores the process force-scalar gate on scope exit so flipping it for an
-// in-process A/B comparison cannot leak into later tests in the same process.
-struct ForceScalarGuard {
-  bool orig;
-  ForceScalarGuard() : orig(util::force_scalar()) {}
-  ~ForceScalarGuard() { util::set_force_scalar_for_testing(orig); }
-};
-
 void check_case(const FmaCase &c, uint64_t exec) {
-  ForceScalarGuard gate_guard;
 
   constexpr uint64_t SEED = 0xF1A'1234'5678'9ABCULL;
 
@@ -179,7 +168,6 @@ void check_case(const FmaCase &c, uint64_t exec) {
   std::array<uint32_t, WF_SIZE> seeded{};
 
   auto run_mode = [&](bool force_scalar) -> std::array<uint32_t, WF_SIZE> {
-    util::set_force_scalar_for_testing(force_scalar);
     Fixture fx;
     EXPECT_NE(fx.cu, nullptr);
     EXPECT_NE(fx.wf, nullptr);
@@ -191,7 +179,10 @@ void check_case(const FmaCase &c, uint64_t exec) {
     Instruction *inst = fx.decoder->decode(words);
     EXPECT_NE(inst, nullptr) << c.label << ": decode failed";
     seeded = fx.seed_inputs(SEED, c.is_f16, exec, &nan_lane);
-    fx.cu->execute_instruction(inst, *fx.wf);
+    if (force_scalar)
+      fx.cu->scalar_execute_instruction(inst, *fx.wf);
+    else
+      fx.cu->execute_instruction(inst, *fx.wf);
     auto out = fx.snapshot_dst();
     delete inst;
     return out;

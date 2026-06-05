@@ -11,7 +11,7 @@
 /// (RJ_FORCE_SCALAR, immutable); each case runs TWICE in the same process -- once
 /// forcing the scalar body, once the SIMD fast path, with identical inputs/EXEC
 /// -- and the destination word pairs are asserted equal with EXPECT_EQ
-/// (util::set_force_scalar_for_testing flips the gate in-process). In-process
+/// (cu->scalar_execute_instruction selects the scalar path in-process). In-process
 /// inactive lanes must stay preserved under full and partial EXEC.
 ///
 /// The float-result conversions (f32_f64 / f64_f32) are correctly rounded
@@ -20,8 +20,6 @@
 /// excluded from the comparison — NaN-ness is deterministic from the inputs, so
 /// both runs skip the same words. The int conversions are exact (NaN -> 0,
 /// saturating clamp), compared with no carve-out.
-
-#include "util/simd_test_hooks.h"
 
 #include "rocjitsu/code/rj_code.h"
 #include "rocjitsu/isa/arch/amdgpu/shared/execute_shared.h"
@@ -151,9 +149,13 @@ struct Fixture {
     wf->set_exec(exec);
   }
 
-  std::array<uint64_t, WF_SIZE> run(Instruction *inst, const CvtCase &c, uint64_t exec) {
+  std::array<uint64_t, WF_SIZE> run(Instruction *inst, const CvtCase &c, uint64_t exec,
+                                    bool scalar_only) {
     seed_inputs(c, exec);
-    cu->execute_instruction(inst, *wf);
+    if (scalar_only)
+      cu->scalar_execute_instruction(inst, *wf);
+    else
+      cu->execute_instruction(inst, *wf);
     std::array<uint64_t, WF_SIZE> out{};
     uint32_t vb = wf->vgpr_alloc().base;
     for (uint32_t lane = 0; lane < WF_SIZE; ++lane)
@@ -162,19 +164,9 @@ struct Fixture {
   }
 };
 
-// Restores the process force-scalar gate on scope exit so flipping it for an
-// in-process A/B comparison cannot leak into later tests in the same process.
-struct ForceScalarGuard {
-  bool orig;
-  ForceScalarGuard() : orig(util::force_scalar()) {}
-  ~ForceScalarGuard() { util::set_force_scalar_for_testing(orig); }
-};
-
 void check_case(const CvtCase &c, uint64_t exec) {
-  ForceScalarGuard gate_guard;
 
   auto run_mode = [&](bool force_scalar) -> std::array<uint64_t, WF_SIZE> {
-    util::set_force_scalar_for_testing(force_scalar);
     Fixture fx;
     EXPECT_NE(fx.cu, nullptr);
     EXPECT_NE(fx.wf, nullptr);
@@ -182,7 +174,7 @@ void check_case(const CvtCase &c, uint64_t exec) {
     vop3_encode(c.opcode, /*vdst=*/2, /*src0=*/256, words);
     Instruction *inst = fx.decoder->decode(words);
     EXPECT_NE(inst, nullptr) << c.name << " decode failed";
-    auto out = fx.run(inst, c, exec);
+    auto out = fx.run(inst, c, exec, force_scalar);
     delete inst;
     return out;
   };

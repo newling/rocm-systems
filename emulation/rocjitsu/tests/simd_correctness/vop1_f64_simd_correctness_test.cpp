@@ -7,7 +7,7 @@
 /// rcp/rsq/sqrt) and the pure 64-bit move v_mov_b64. Each case runs TWICE in the
 /// same process -- once forcing the scalar body, once the SIMD fast path, with
 /// identical inputs/EXEC -- and the destination f64 results are asserted equal
-/// per active, non-skipped lane (util::set_force_scalar_for_testing flips the
+/// per active, non-skipped lane (cu->scalar_execute_instruction selects the
 /// gate in-process). In-process inactive lanes must stay preserved under full
 /// and partial EXEC.
 ///
@@ -18,8 +18,6 @@
 /// from the comparison — NaN-ness of the result is deterministic from the
 /// inputs, so both runs skip the same lanes. v_mov_b64 is a pure bit copy and is
 /// compared exactly (no NaN carve-out).
-
-#include "util/simd_test_hooks.h"
 
 #include "rocjitsu/code/rj_code.h"
 #include "rocjitsu/isa/arch/amdgpu/shared/execute_shared.h"
@@ -135,9 +133,12 @@ struct Fixture {
     wf->set_exec(exec);
   }
 
-  std::array<uint64_t, WF_SIZE> run(Instruction *inst, uint64_t exec) {
+  std::array<uint64_t, WF_SIZE> run(Instruction *inst, uint64_t exec, bool scalar_only) {
     seed_inputs(exec);
-    cu->execute_instruction(inst, *wf);
+    if (scalar_only)
+      cu->scalar_execute_instruction(inst, *wf);
+    else
+      cu->execute_instruction(inst, *wf);
     std::array<uint64_t, WF_SIZE> out{};
     uint32_t vb = wf->vgpr_alloc().base;
     for (uint32_t lane = 0; lane < WF_SIZE; ++lane)
@@ -146,19 +147,9 @@ struct Fixture {
   }
 };
 
-// Restores the process force-scalar gate on scope exit so flipping it for an
-// in-process A/B comparison cannot leak into later tests in the same process.
-struct ForceScalarGuard {
-  bool orig;
-  ForceScalarGuard() : orig(util::force_scalar()) {}
-  ~ForceScalarGuard() { util::set_force_scalar_for_testing(orig); }
-};
-
 void check_case(const F64UnaryCase &c, uint64_t exec) {
-  ForceScalarGuard gate_guard;
 
   auto run_mode = [&](bool force_scalar) -> std::array<uint64_t, WF_SIZE> {
-    util::set_force_scalar_for_testing(force_scalar);
     Fixture fx;
     EXPECT_NE(fx.cu, nullptr);
     EXPECT_NE(fx.wf, nullptr);
@@ -167,7 +158,7 @@ void check_case(const F64UnaryCase &c, uint64_t exec) {
     uint32_t words[4] = {enc, 0u, 0u, 0u};
     Instruction *inst = fx.decoder->decode(words);
     EXPECT_NE(inst, nullptr) << c.name << " decode failed";
-    auto out = fx.run(inst, exec);
+    auto out = fx.run(inst, exec, force_scalar);
     delete inst;
     return out;
   };

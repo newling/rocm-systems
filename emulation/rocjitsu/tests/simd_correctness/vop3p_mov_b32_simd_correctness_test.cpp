@@ -9,10 +9,8 @@
 /// read_simd64/write_simd64 to fetch and store the 64-bit pair. Each case runs
 /// TWICE in the same process -- once forcing the scalar body, once the SIMD fast
 /// path, with identical inputs/EXEC -- and the 64-bit dst results are asserted
-/// equal with EXPECT_EQ (util::set_force_scalar_for_testing flips the gate
+/// equal with EXPECT_EQ (cu->scalar_execute_instruction selects the scalar path
 /// in-process). In-process inactive lanes must keep the sentinel.
-
-#include "util/simd_test_hooks.h"
 
 #include "rocjitsu/code/rj_code.h"
 #include "rocjitsu/isa/arch/amdgpu/shared/execute_shared.h"
@@ -98,9 +96,13 @@ struct Fixture {
     wf->set_exec(exec);
   }
 
-  std::array<uint64_t, WF_SIZE> run(Instruction *inst, uint32_t rot, uint64_t exec) {
+  std::array<uint64_t, WF_SIZE> run(Instruction *inst, uint32_t rot, uint64_t exec,
+                                    bool scalar_only) {
     seed_inputs(rot, exec);
-    cu->execute_instruction(inst, *wf);
+    if (scalar_only)
+      cu->scalar_execute_instruction(inst, *wf);
+    else
+      cu->execute_instruction(inst, *wf);
     std::array<uint64_t, WF_SIZE> out{};
     uint32_t vb = wf->vgpr_alloc().base;
     for (uint32_t lane = 0; lane < WF_SIZE; ++lane) {
@@ -112,19 +114,9 @@ struct Fixture {
   }
 };
 
-// Restores the process force-scalar gate on scope exit so flipping it for an
-// in-process A/B comparison cannot leak into later tests in the same process.
-struct ForceScalarGuard {
-  bool orig;
-  ForceScalarGuard() : orig(util::force_scalar()) {}
-  ~ForceScalarGuard() { util::set_force_scalar_for_testing(orig); }
-};
-
 void check(uint64_t exec) {
-  ForceScalarGuard gate_guard;
 
   auto run_mode = [&](bool force_scalar, uint32_t rot) -> std::array<uint64_t, WF_SIZE> {
-    util::set_force_scalar_for_testing(force_scalar);
     Fixture fx;
     EXPECT_NE(fx.cu, nullptr);
     EXPECT_NE(fx.wf, nullptr);
@@ -133,7 +125,7 @@ void check(uint64_t exec) {
     vop3p_encode(/*op=*/51, kDstVgpr, /*src0=*/256, /*src1=*/258, words);
     Instruction *inst = fx.decoder->decode(words);
     EXPECT_NE(inst, nullptr) << "v_pk_mov_b32_vop3p decode failed";
-    auto out = fx.run(inst, rot, exec);
+    auto out = fx.run(inst, rot, exec, force_scalar);
     delete inst;
     return out;
   };

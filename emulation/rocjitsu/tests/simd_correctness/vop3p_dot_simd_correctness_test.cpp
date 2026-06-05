@@ -6,7 +6,7 @@
 /// dot-product family on CDNA4. Each case runs TWICE in the same process -- once
 /// forcing the scalar body, once the SIMD fast path, with identical inputs/EXEC
 /// -- and the results are asserted equal per active, non-skipped lane
-/// (util::set_force_scalar_for_testing flips the gate in-process). The f16 form's
+/// (cu->scalar_execute_instruction selects the scalar path in-process). The f16 form's
 /// NaN-input lanes carry a toolchain-dependent NaN-payload divergence and are
 /// excluded from the comparison (the skip condition is computed from the inputs,
 /// so both runs skip the same lanes). In-process inactive lanes must keep the
@@ -24,8 +24,6 @@
 /// combination × clamp with NaN-input lanes skipped (toolchain-dependent NaN
 /// payload divergence, same carve-out as the pk_fma slices). Default packing
 /// (op_sel = 0, op_sel_hi = 3) only — non-default modes bail to scalar.
-
-#include "util/simd_test_hooks.h"
 
 #include "rocjitsu/code/rj_code.h"
 #include "rocjitsu/isa/arch/amdgpu/shared/execute_shared.h"
@@ -54,14 +52,6 @@ constexpr uint32_t SGPRS_PER_WF = 106;
 constexpr uint32_t VGPRS_PER_WF = 256;
 constexpr uint32_t kDstVgpr = 6;
 constexpr uint32_t DST_SENTINEL = 0xCDCDCDCDu;
-
-// Restores the process force-scalar gate on scope exit so flipping it for an
-// in-process A/B comparison cannot leak into later tests in the same process.
-struct ForceScalarGuard {
-  bool orig;
-  ForceScalarGuard() : orig(util::force_scalar()) {}
-  ~ForceScalarGuard() { util::set_force_scalar_for_testing(orig); }
-};
 
 // CDNA4 VOP3P dot encoding (all dot ops are 3-source). Default packing:
 // op_sel = 0, op_sel_hi = 3, op_sel_hi_2 = 1. clamp -> word0 bit 15; neg ->
@@ -114,10 +104,8 @@ bool is_f16_nan(uint16_t b) { return ((b >> 10) & 0x1Fu) == 0x1Fu && (b & 0x3FFu
 // ---- integer dot products -------------------------------------------------
 
 void check_int_case(const IntCase &c, uint64_t exec, uint32_t clamp) {
-  ForceScalarGuard gate_guard;
 
   auto run_mode = [&](bool force_scalar, uint32_t rot) -> std::array<uint32_t, WF_SIZE> {
-    util::set_force_scalar_for_testing(force_scalar);
     amdgpu::GpuMemory gpu_mem("vop3p_dot_int_mem");
     amdgpu::L2Cache l2("vop3p_dot_int_l2");
     amdgpu::ComputeUnitCore::Config cfg{};
@@ -146,7 +134,10 @@ void check_int_case(const IntCase &c, uint64_t exec, uint32_t clamp) {
       cu->write_vgpr(vb + kDstVgpr, lane, DST_SENTINEL);
     }
     wf->set_exec(exec);
-    cu->execute_instruction(inst, *wf);
+    if (force_scalar)
+      cu->scalar_execute_instruction(inst, *wf);
+    else
+      cu->execute_instruction(inst, *wf);
     std::array<uint32_t, WF_SIZE> out{};
     for (uint32_t lane = 0; lane < WF_SIZE; ++lane)
       out[lane] = cu->read_vgpr(vb + kDstVgpr, lane);
@@ -216,7 +207,6 @@ const std::array<uint16_t, 14> kF16Bits = {{
 const std::array<float, 7> kF32Acc = {{0.0f, -0.0f, 1.0f, -2.5f, 100.0f, -1024.0f, 0.25f}};
 
 void check_f16_case(uint64_t exec, uint32_t neg, uint32_t neg_hi, uint32_t clamp) {
-  ForceScalarGuard gate_guard;
 
   auto half_bits = [&](uint32_t lane, uint32_t rot) {
     uint16_t a_lo = kF16Bits[lane % kF16Bits.size()];
@@ -227,7 +217,6 @@ void check_f16_case(uint64_t exec, uint32_t neg, uint32_t neg_hi, uint32_t clamp
   };
 
   auto run_mode = [&](bool force_scalar, uint32_t rot) -> std::array<uint32_t, WF_SIZE> {
-    util::set_force_scalar_for_testing(force_scalar);
     amdgpu::GpuMemory gpu_mem("vop3p_dot_f16_mem");
     amdgpu::L2Cache l2("vop3p_dot_f16_l2");
     amdgpu::ComputeUnitCore::Config cfg{};
@@ -260,7 +249,10 @@ void check_f16_case(uint64_t exec, uint32_t neg, uint32_t neg_hi, uint32_t clamp
       cu->write_vgpr(vb + kDstVgpr, lane, DST_SENTINEL);
     }
     wf->set_exec(exec);
-    cu->execute_instruction(inst, *wf);
+    if (force_scalar)
+      cu->scalar_execute_instruction(inst, *wf);
+    else
+      cu->execute_instruction(inst, *wf);
     std::array<uint32_t, WF_SIZE> out{};
     for (uint32_t lane = 0; lane < WF_SIZE; ++lane)
       out[lane] = cu->read_vgpr(vb + kDstVgpr, lane);

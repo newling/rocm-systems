@@ -9,10 +9,8 @@
 /// Each (vcc) case runs TWICE in the same process -- once forcing the scalar
 /// body, once the SIMD fast path, with identical seed/inputs/EXEC/VCC -- and the
 /// two 64-lane result arrays are asserted equal with EXPECT_EQ
-/// (util::set_force_scalar_for_testing flips the gate in-process).
+/// (cu->scalar_execute_instruction selects the scalar path in-process).
 /// In-process inactive EXEC lanes must keep the dst sentinel.
-
-#include "util/simd_test_hooks.h"
 
 #include "rocjitsu/code/rj_code.h"
 #include "rocjitsu/isa/arch/amdgpu/shared/execute_shared.h"
@@ -83,9 +81,13 @@ struct Fixture {
     return out;
   }
 
-  std::array<uint32_t, WF_SIZE> run(Instruction *inst, uint64_t seed, uint64_t exec, uint64_t vcc) {
+  std::array<uint32_t, WF_SIZE> run(Instruction *inst, uint64_t seed, uint64_t exec, uint64_t vcc,
+                                    bool scalar_only) {
     seed_inputs(seed, exec, vcc);
-    cu->execute_instruction(inst, *wf);
+    if (scalar_only)
+      cu->scalar_execute_instruction(inst, *wf);
+    else
+      cu->execute_instruction(inst, *wf);
     return snapshot_dst();
   }
 };
@@ -95,21 +97,11 @@ const uint64_t kVccPatterns[] = {
     0x5555555555555555ULL, 0x0123456789ABCDEFULL, 0xF0F0F0F00F0F0F0FULL,
 };
 
-// Restores the process force-scalar gate on scope exit so flipping it for an
-// in-process A/B comparison cannot leak into later tests in the same process.
-struct ForceScalarGuard {
-  bool orig;
-  ForceScalarGuard() : orig(util::force_scalar()) {}
-  ~ForceScalarGuard() { util::set_force_scalar_for_testing(orig); }
-};
-
 void check_case(uint64_t exec) {
-  ForceScalarGuard gate_guard;
 
   constexpr uint64_t SEED = 0xCD'1234'5678'9AB0ULL;
 
   auto run_mode = [&](bool force_scalar, uint64_t vcc) -> std::array<uint32_t, WF_SIZE> {
-    util::set_force_scalar_for_testing(force_scalar);
     Fixture fx;
     EXPECT_NE(fx.cu, nullptr);
     EXPECT_NE(fx.wf, nullptr);
@@ -117,7 +109,7 @@ void check_case(uint64_t exec) {
     uint32_t words[4] = {enc, 0u, 0u, 0u};
     Instruction *inst = fx.decoder->decode(words);
     EXPECT_NE(inst, nullptr) << "v_cndmask_b32: decode failed";
-    auto out = fx.run(inst, SEED, exec, vcc);
+    auto out = fx.run(inst, SEED, exec, vcc, force_scalar);
     delete inst;
     return out;
   };

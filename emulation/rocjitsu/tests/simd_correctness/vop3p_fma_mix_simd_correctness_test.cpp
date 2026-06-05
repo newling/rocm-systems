@@ -6,7 +6,7 @@
 /// fma_mix / mad_mix mixed-precision ops. Each case runs TWICE in the same
 /// process -- once forcing the scalar body, once the SIMD fast path, with
 /// identical inputs/EXEC -- and the results are asserted equal per active,
-/// non-skipped lane (util::set_force_scalar_for_testing flips the gate
+/// non-skipped lane (cu->scalar_execute_instruction selects the scalar path
 /// in-process). NaN-input lanes carry an accepted NaN-payload divergence and are
 /// excluded from the comparison — the skip condition is computed from the
 /// inputs, identical in both runs, so both skip the same lanes. In-process
@@ -31,8 +31,6 @@
 /// the scalar `a * b + c` and the SIMD chain can quiet sNaN to qNaN with
 /// different payloads (accepted divergence, mirroring the existing VOP3
 /// ternary tests).
-
-#include "util/simd_test_hooks.h"
 
 #include "rocjitsu/code/rj_code.h"
 #include "rocjitsu/isa/arch/amdgpu/shared/execute_shared.h"
@@ -62,14 +60,6 @@ constexpr uint32_t SGPRS_PER_WF = 106;
 constexpr uint32_t VGPRS_PER_WF = 256;
 constexpr uint32_t kDstVgpr = 6;
 constexpr uint32_t DST_SENTINEL = 0xCDCDCDCDu;
-
-// Restores the process force-scalar gate on scope exit so flipping it for an
-// in-process A/B comparison cannot leak into later tests in the same process.
-struct ForceScalarGuard {
-  bool orig;
-  ForceScalarGuard() : orig(util::force_scalar()) {}
-  ~ForceScalarGuard() { util::set_force_scalar_for_testing(orig); }
-};
 
 // VOP3P encoding word0 layout (shared between CDNA4 and RDNA3 except for the
 // width of the encoding marker): bits 0-7 vdst, 8-10 neg_hi, 11-13 op_sel,
@@ -286,9 +276,13 @@ template <uint32_t WF_SIZE, int ArchTag> struct Fixture {
   }
 
   std::array<uint32_t, WF_SIZE> run(Instruction *inst, uint32_t rot, bool widen0, bool widen1,
-                                    bool widen2, uint64_t exec, uint32_t dst_seed) {
+                                    bool widen2, uint64_t exec, uint32_t dst_seed,
+                                    bool scalar_only) {
     seed_vgprs(rot, widen0, widen1, widen2, exec, dst_seed);
-    cu->execute_instruction(inst, *wf);
+    if (scalar_only)
+      cu->scalar_execute_instruction(inst, *wf);
+    else
+      cu->execute_instruction(inst, *wf);
     std::array<uint32_t, WF_SIZE> out{};
     uint32_t vb = wf->vgpr_alloc().base;
     for (uint32_t lane = 0; lane < WF_SIZE; ++lane)
@@ -331,7 +325,6 @@ void check_combo(uint32_t opcode, const ModCombo &mc, uint64_t exec, uint32_t ds
   const bool widen2 = mc.op_sel_hi_2 != 0;
 
   auto run_mode = [&](bool force_scalar, uint32_t rot) -> std::array<uint32_t, WF_SIZE> {
-    util::set_force_scalar_for_testing(force_scalar);
     Fixture<WF_SIZE, ArchTag> fx;
     EXPECT_NE(fx.cu, nullptr);
     EXPECT_NE(fx.wf, nullptr);
@@ -345,7 +338,7 @@ void check_combo(uint32_t opcode, const ModCombo &mc, uint64_t exec, uint32_t ds
     }
     Instruction *inst = fx.decoder->decode(words);
     EXPECT_NE(inst, nullptr) << label << " decode failed";
-    auto out = fx.run(inst, rot, widen0, widen1, widen2, exec, dst_seed);
+    auto out = fx.run(inst, rot, widen0, widen1, widen2, exec, dst_seed, force_scalar);
     delete inst;
     return out;
   };
@@ -382,7 +375,6 @@ void check_combo(uint32_t opcode, const ModCombo &mc, uint64_t exec, uint32_t ds
 
 template <uint32_t WF_SIZE, int ArchTag>
 void check_op(uint32_t opcode, uint64_t exec, uint32_t dst_seed, const char *label) {
-  ForceScalarGuard gate_guard;
   for (const auto &mc : kModCombos)
     check_combo<WF_SIZE, ArchTag>(opcode, mc, exec, dst_seed, label);
 }

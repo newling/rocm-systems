@@ -6,7 +6,7 @@
 /// 16-bit-lane VOP3 ops that are RDNA3+ only (no CDNA4 decode path). Each case
 /// runs TWICE in the same process -- once forcing the scalar body, once the SIMD
 /// fast path, with identical inputs/EXEC -- and the two result arrays are
-/// asserted equal with EXPECT_EQ (util::set_force_scalar_for_testing flips the
+/// asserted equal with EXPECT_EQ (cu->scalar_execute_instruction selects the
 /// gate in-process). In-process inactive lanes must keep the sentinel.
 ///   - v_and_b16, v_or_b16, v_xor_b16: low-16 bitwise binary, routed
 ///     through the int VOP3 binary glue with a `& 0xFFFFu` mask.
@@ -18,8 +18,6 @@
 /// All five share the scalar-body pattern `uint32_t(uint16_t(... low16 ...))`
 /// — the high 16 bits of the destination VGPR are zeroed. The CU and decoder
 /// are built for RDNA3; encoding marker is 0x35<<26.
-
-#include "util/simd_test_hooks.h"
 
 #include "rocjitsu/code/rj_code.h"
 #include "rocjitsu/isa/arch/amdgpu/shared/execute_shared.h"
@@ -134,9 +132,13 @@ struct Fixture {
     wf->set_exec(exec);
   }
 
-  std::array<uint32_t, WF_SIZE> run(Instruction *inst, uint32_t rot, uint64_t exec) {
+  std::array<uint32_t, WF_SIZE> run(Instruction *inst, uint32_t rot, uint64_t exec,
+                                    bool scalar_only) {
     seed_vgprs(rot, exec);
-    cu->execute_instruction(inst, *wf);
+    if (scalar_only)
+      cu->scalar_execute_instruction(inst, *wf);
+    else
+      cu->execute_instruction(inst, *wf);
     std::array<uint32_t, WF_SIZE> out{};
     uint32_t vb = wf->vgpr_alloc().base;
     for (uint32_t lane = 0; lane < WF_SIZE; ++lane)
@@ -156,19 +158,9 @@ const std::array<BinCase, 3> kBinCases = {{
     {"v_xor_b16_vop3", 868},
 }};
 
-// Restores the process force-scalar gate on scope exit so flipping it for an
-// in-process A/B comparison cannot leak into later tests in the same process.
-struct ForceScalarGuard {
-  bool orig;
-  ForceScalarGuard() : orig(util::force_scalar()) {}
-  ~ForceScalarGuard() { util::set_force_scalar_for_testing(orig); }
-};
-
 void check_binary(const BinCase &c, uint64_t exec) {
-  ForceScalarGuard gate_guard;
 
   auto run_mode = [&](bool force_scalar, uint32_t rot) -> std::array<uint32_t, WF_SIZE> {
-    util::set_force_scalar_for_testing(force_scalar);
     Fixture fx;
     EXPECT_NE(fx.cu, nullptr);
     EXPECT_NE(fx.wf, nullptr);
@@ -176,7 +168,7 @@ void check_binary(const BinCase &c, uint64_t exec) {
     rdna3_vop3_encode(c.opcode, kDstVgpr, /*src0=*/256, /*src1=*/257, /*src2=*/0, words);
     Instruction *inst = fx.decoder->decode(words);
     EXPECT_NE(inst, nullptr) << c.name << " decode failed";
-    auto out = fx.run(inst, rot, exec);
+    auto out = fx.run(inst, rot, exec, force_scalar);
     delete inst;
     return out;
   };
@@ -201,10 +193,8 @@ void check_binary(const BinCase &c, uint64_t exec) {
 }
 
 void check_not_b16(uint64_t exec) {
-  ForceScalarGuard gate_guard;
 
   auto run_mode = [&](bool force_scalar) -> std::array<uint32_t, WF_SIZE> {
-    util::set_force_scalar_for_testing(force_scalar);
     Fixture fx;
     EXPECT_NE(fx.cu, nullptr);
     EXPECT_NE(fx.wf, nullptr);
@@ -212,7 +202,7 @@ void check_not_b16(uint64_t exec) {
     rdna3_vop3_encode(/*op=*/489, /*vdst=*/kDstVgpr, /*src0=*/256, /*src1=*/0, /*src2=*/0, words);
     Instruction *inst = fx.decoder->decode(words);
     EXPECT_NE(inst, nullptr) << "v_not_b16_vop3 decode failed";
-    auto out = fx.run(inst, 0, exec);
+    auto out = fx.run(inst, 0, exec, force_scalar);
     delete inst;
     return out;
   };
@@ -233,10 +223,8 @@ void check_not_b16(uint64_t exec) {
 }
 
 void check_cndmask_b16(uint64_t exec, uint64_t sel) {
-  ForceScalarGuard gate_guard;
 
   auto run_mode = [&](bool force_scalar, uint32_t rot) -> std::array<uint32_t, WF_SIZE> {
-    util::set_force_scalar_for_testing(force_scalar);
     Fixture fx;
     EXPECT_NE(fx.cu, nullptr);
     EXPECT_NE(fx.wf, nullptr);
@@ -248,7 +236,7 @@ void check_cndmask_b16(uint64_t exec, uint64_t sel) {
                       words);
     Instruction *inst = fx.decoder->decode(words);
     EXPECT_NE(inst, nullptr) << "v_cndmask_b16_vop3 decode failed";
-    auto out = fx.run(inst, rot, exec);
+    auto out = fx.run(inst, rot, exec, force_scalar);
     delete inst;
     return out;
   };
@@ -325,10 +313,8 @@ TEST(Vop3B16RdnaSimdCorrectness, CndmaskB16_PartialExec) {
 // --- v_mov_b16: u16 src0 -> f32 -> omod / clamp -> u16 dst (zero-extended) ---
 
 void check_mov_b16(uint64_t exec, uint32_t omod, uint32_t clamp) {
-  ForceScalarGuard gate_guard;
 
   auto run_mode = [&](bool force_scalar) -> std::array<uint32_t, WF_SIZE> {
-    util::set_force_scalar_for_testing(force_scalar);
     Fixture fx;
     EXPECT_NE(fx.cu, nullptr);
     EXPECT_NE(fx.wf, nullptr);
@@ -337,7 +323,7 @@ void check_mov_b16(uint64_t exec, uint32_t omod, uint32_t clamp) {
                           clamp, omod, words);
     Instruction *inst = fx.decoder->decode(words);
     EXPECT_NE(inst, nullptr) << "v_mov_b16_vop3 decode failed";
-    auto out = fx.run(inst, 0, exec);
+    auto out = fx.run(inst, 0, exec, force_scalar);
     delete inst;
     return out;
   };

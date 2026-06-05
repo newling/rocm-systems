@@ -15,12 +15,10 @@
 /// forcing the scalar body, once the SIMD fast path, with identical inputs --
 /// and the scalar-vs-SIMD equivalence on BOTH the destination VGPR AND the full
 /// 64-bit SGPR-pair carry result is asserted with EXPECT_EQ
-/// (util::set_force_scalar_for_testing flips the gate in-process), sweeping
+/// (cu->scalar_execute_instruction selects the scalar path in-process), sweeping
 /// {full, partial} EXEC × {VCC seeds} × {cin patterns}. In-process inactive dst
 /// lanes must keep the sentinel. Inputs deliberately seed the 32-bit
 /// carry/borrow boundary on the low lanes.
-
-#include "util/simd_test_hooks.h"
 
 #include "rocjitsu/code/rj_code.h"
 #include "rocjitsu/isa/arch/amdgpu/shared/execute_shared.h"
@@ -148,9 +146,12 @@ template <int WaveSize> struct WaveFixture {
   };
 
   Result run(Instruction *inst, uint64_t seed, uint64_t exec, uint64_t vcc_in, uint64_t sdst_in,
-             uint32_t sdst_sgpr, uint64_t cin_word, uint32_t cin_sgpr_pair) {
+             uint32_t sdst_sgpr, uint64_t cin_word, uint32_t cin_sgpr_pair, bool scalar_only) {
     seed_inputs(seed, exec, vcc_in, sdst_in, sdst_sgpr, cin_word, cin_sgpr_pair);
-    cu->execute_instruction(inst, *wf);
+    if (scalar_only)
+      cu->scalar_execute_instruction(inst, *wf);
+    else
+      cu->execute_instruction(inst, *wf);
     Result res;
     uint32_t vbase = wf->vgpr_alloc().base;
     for (uint32_t lane = 0; lane < WaveSize; ++lane)
@@ -185,18 +186,9 @@ const CarryCase kRdnaCases[] = {
     {"v_subrev_co_ci_u32_vop3", 290, true},
 };
 
-// Restores the process force-scalar gate on scope exit so flipping it for an
-// in-process A/B comparison cannot leak into later tests in the same process.
-struct ForceScalarGuard {
-  bool orig;
-  ForceScalarGuard() : orig(util::force_scalar()) {}
-  ~ForceScalarGuard() { util::set_force_scalar_for_testing(orig); }
-};
-
 template <int WaveSize>
 void check_case(const char *mem_label, const char *l2_label, const char *cu_label,
                 rj_code_arch_t arch, const CarryCase &c, uint32_t encoding_marker, uint64_t exec) {
-  ForceScalarGuard gate_guard;
 
   using Result = typename WaveFixture<WaveSize>::Result;
 
@@ -208,7 +200,6 @@ void check_case(const char *mem_label, const char *l2_label, const char *cu_labe
   // Runs one (case, vcc_in, cin_word) in the requested execute mode (fresh
   // WaveFixture + decode per run isolates VGPR/SGPR/VCC state).
   auto run_mode = [&](bool force_scalar, uint64_t vcc_in, uint64_t cin_word) -> Result {
-    util::set_force_scalar_for_testing(force_scalar);
     WaveFixture<WaveSize> fx(mem_label, l2_label, cu_label, arch);
     EXPECT_NE(fx.cu, nullptr);
     EXPECT_NE(fx.wf, nullptr);
@@ -224,7 +215,7 @@ void check_case(const char *mem_label, const char *l2_label, const char *cu_labe
                         /*src0=*/256, /*src1=*/257, /*src2=*/src2_field, encoding_marker, words);
     Instruction *inst = fx.decoder->decode(words);
     EXPECT_NE(inst, nullptr) << c.label << ": decode failed";
-    auto out = fx.run(inst, SEED, exec, vcc_in, SDST_SEED, sb, cin_word, cin_pair);
+    auto out = fx.run(inst, SEED, exec, vcc_in, SDST_SEED, sb, cin_word, cin_pair, force_scalar);
     delete inst;
     return out;
   };

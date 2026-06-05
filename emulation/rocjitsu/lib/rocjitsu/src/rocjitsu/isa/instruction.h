@@ -80,7 +80,8 @@ public:
   /// @param[in] mnemonic Human-readable mnemonic (must point to static storage
   ///            or storage that outlives the instruction — typically a string
   ///            literal or a member of the encoding base class).
-  Instruction(std::string_view mnemonic, ExecuteFn exec) : execute(exec), mnemonic_(mnemonic) {}
+  Instruction(std::string_view mnemonic, ExecuteFn exec, ExecuteFn scalar_exec = nullptr)
+      : execute(exec), scalar_execute(scalar_exec ? scalar_exec : exec), mnemonic_(mnemonic) {}
   virtual ~Instruction() = default;
 
   /// @brief Pool allocator hooks, set by the decoder's enable_pool().
@@ -117,6 +118,10 @@ public:
   /// Each derived instruction class sets this to a trampoline that calls
   /// its ``execute_impl()`` method.  No virtual dispatch.
   const ExecuteFn execute;
+
+  /// @brief Scalar-only execute dispatch (no SIMD fast path).
+  /// Same interface as ``execute`` but always takes the scalar code path.
+  const ExecuteFn scalar_execute;
 
   /// @brief Access the attached dynamic state, or nullptr if none.
   /// @returns Pointer to the dynamic state, or nullptr.
@@ -283,7 +288,8 @@ template <typename Isa> class IsaInstruction : public Instruction {
 public:
   /// @brief Construct an ISA instruction with the given mnemonic.
   /// @param[in] mnemonic Human-readable mnemonic string.
-  IsaInstruction(std::string_view mnemonic, ExecuteFn exec_fn) : Instruction(mnemonic, exec_fn) {}
+  IsaInstruction(std::string_view mnemonic, ExecuteFn exec_fn, ExecuteFn scalar_exec_fn = nullptr)
+      : Instruction(mnemonic, exec_fn, scalar_exec_fn) {}
 
   /// @brief Helper to create an execute dispatch trampoline for a concrete type.
   ///
@@ -297,6 +303,12 @@ public:
   template <typename Derived> static constexpr ExecuteFn make_exec_fn() {
     return [](Instruction &self, void *ctx) {
       static_cast<Derived &>(self).execute_impl(*static_cast<typename Isa::Context *>(ctx));
+    };
+  }
+
+  template <typename Derived> static constexpr ExecuteFn make_scalar_exec_fn() {
+    return [](Instruction &self, void *ctx) {
+      static_cast<Derived &>(self).scalar_execute_impl(*static_cast<typename Isa::Context *>(ctx));
     };
   }
 };

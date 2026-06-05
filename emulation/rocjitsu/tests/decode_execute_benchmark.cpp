@@ -71,7 +71,7 @@ inline bool should_skip(std::string_view mn) {
       "s_waitcnt",    "s_wait_",       "s_barrier",  "s_trap",      "s_sleep",         "s_sethalt",
       "s_sendmsg",    "s_nop",         "s_getpc",    "s_getreg",    "s_setreg",        "s_rfe",
       "s_icache_inv", "s_sendmsghalt", "v_readlane", "v_writelane", "v_readfirstlane", "v_mfma_",
-      "v_smfma_",     "v_wmma_",       "v_swmmac_",
+      "v_smfma_",     "v_wmma_",       "v_swmmac_",  "v_accvgpr",
   };
   for (auto p : SKIP)
     if (mn.substr(0, p.size()) == p)

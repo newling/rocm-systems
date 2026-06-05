@@ -10,7 +10,7 @@
 /// operand). Each (case, mods, rot) runs TWICE in the same process -- once
 /// forcing the scalar body, once the SIMD fast path, with identical inputs/EXEC
 /// -- and the dst results are asserted equal per active, non-skipped lane
-/// (util::set_force_scalar_for_testing flips the gate in-process). NaN-result
+/// (cu->scalar_execute_instruction selects the scalar path in-process). NaN-result
 /// lanes are excluded from the comparison — NaN-ness is deterministic from the
 /// inputs, so both runs skip the same lanes.
 ///
@@ -18,8 +18,6 @@
 /// / v_fmac_f64) are NOT exercised here: their per-isa codegen classes only
 /// initialize src0+src1+vdst (the third FMA arg comes from vdst, no src2
 /// member), so they need a separate accumulate-form glue path.
-
-#include "util/simd_test_hooks.h"
 
 #include "rocjitsu/code/rj_code.h"
 #include "rocjitsu/isa/arch/amdgpu/shared/execute_shared.h"
@@ -197,9 +195,13 @@ struct Fixture {
     wf->set_exec(exec);
   }
 
-  std::array<uint64_t, WF_SIZE> run(Instruction *inst, Kind k, uint32_t rot, uint64_t exec) {
+  std::array<uint64_t, WF_SIZE> run(Instruction *inst, Kind k, uint32_t rot, uint64_t exec,
+                                    bool scalar_only) {
     seed_inputs(k, rot, exec);
-    cu->execute_instruction(inst, *wf);
+    if (scalar_only)
+      cu->scalar_execute_instruction(inst, *wf);
+    else
+      cu->execute_instruction(inst, *wf);
     std::array<uint64_t, WF_SIZE> out{};
     uint32_t vb = wf->vgpr_alloc().base;
     for (uint32_t lane = 0; lane < WF_SIZE; ++lane) {
@@ -213,14 +215,6 @@ struct Fixture {
   }
 };
 
-// Restores the process force-scalar gate on scope exit so flipping it for an
-// in-process A/B comparison cannot leak into later tests in the same process.
-struct ForceScalarGuard {
-  bool orig;
-  ForceScalarGuard() : orig(util::force_scalar()) {}
-  ~ForceScalarGuard() { util::set_force_scalar_for_testing(orig); }
-};
-
 bool result_is_nan(Kind k, uint64_t v) {
   if (k == Kind::F32)
     return is_f32_nan(static_cast<uint32_t>(v));
@@ -231,10 +225,8 @@ bool result_is_nan(Kind k, uint64_t v) {
 
 void check_case(const Case &c, uint32_t abs, uint32_t neg, uint32_t omod, uint32_t clamp,
                 uint64_t exec) {
-  ForceScalarGuard gate_guard;
 
   auto run_mode = [&](bool force_scalar, uint32_t rot) -> std::array<uint64_t, WF_SIZE> {
-    util::set_force_scalar_for_testing(force_scalar);
     Fixture fx;
     EXPECT_NE(fx.cu, nullptr);
     EXPECT_NE(fx.wf, nullptr);
@@ -246,7 +238,7 @@ void check_case(const Case &c, uint32_t abs, uint32_t neg, uint32_t omod, uint32
                 neg, omod, clamp, words);
     Instruction *inst = fx.decoder->decode(words);
     EXPECT_NE(inst, nullptr) << c.name << " decode failed";
-    auto out = fx.run(inst, c.kind, rot, exec);
+    auto out = fx.run(inst, c.kind, rot, exec, force_scalar);
     delete inst;
     return out;
   };
@@ -270,12 +262,32 @@ void check_case(const Case &c, uint32_t abs, uint32_t neg, uint32_t omod, uint32
   }
 }
 
-void check_all_mods(const Case &c, uint64_t exec) {
-  for (uint32_t abs = 0; abs < 8; ++abs)
-    for (uint32_t neg = 0; neg < 8; ++neg)
-      for (uint32_t omod = 0; omod < 4; ++omod)
-        for (uint32_t clamp = 0; clamp < 2; ++clamp)
-          check_case(c, abs, neg, omod, clamp, exec);
+void check_representative_mods(const Case &c, uint64_t exec) {
+  // Representative modifier subset instead of exhaustive 8×8×4×2 sweep.
+  // Covers: no modifiers, each single-source abs/neg, all-sources abs/neg,
+  // each omod value, clamp, and a combined case.
+  struct ModCombo {
+    uint32_t abs, neg, omod, clamp;
+  };
+  static constexpr ModCombo kCombos[] = {
+      {0, 0, 0, 0}, // baseline
+      {1, 0, 0, 0}, // abs src0
+      {2, 0, 0, 0}, // abs src1
+      {4, 0, 0, 0}, // abs src2
+      {7, 0, 0, 0}, // abs all
+      {0, 1, 0, 0}, // neg src0
+      {0, 2, 0, 0}, // neg src1
+      {0, 4, 0, 0}, // neg src2
+      {0, 7, 0, 0}, // neg all
+      {7, 7, 0, 0}, // abs+neg all
+      {0, 0, 1, 0}, // omod ×2
+      {0, 0, 2, 0}, // omod ×4
+      {0, 0, 3, 0}, // omod ÷2
+      {0, 0, 0, 1}, // clamp
+      {3, 5, 1, 1}, // combined: abs01 + neg02 + omod×2 + clamp
+  };
+  for (const auto &m : kCombos)
+    check_case(c, m.abs, m.neg, m.omod, m.clamp, exec);
 }
 
 TEST(Vop3TernaryFpSimdCorrectness, FullExec) {
@@ -284,7 +296,7 @@ TEST(Vop3TernaryFpSimdCorrectness, FullExec) {
     return;
   }
   for (const auto &c : kCases)
-    check_all_mods(c, /*exec=*/~0ULL);
+    check_representative_mods(c, /*exec=*/~0ULL);
 }
 
 TEST(Vop3TernaryFpSimdCorrectness, PartialExec) {

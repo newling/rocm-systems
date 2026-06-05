@@ -9,9 +9,7 @@
 /// path), so no carve-out needed. Each (case, mods, rot) runs TWICE in the same
 /// process -- once forcing the scalar body, once the SIMD fast path, with
 /// identical inputs/EXEC -- and the result arrays are asserted equal with
-/// EXPECT_EQ (util::set_force_scalar_for_testing flips the gate in-process).
-
-#include "util/simd_test_hooks.h"
+/// EXPECT_EQ (cu->scalar_execute_instruction selects the scalar path in-process).
 
 #include "rocjitsu/code/rj_code.h"
 #include "rocjitsu/isa/arch/amdgpu/shared/execute_shared.h"
@@ -128,9 +126,13 @@ struct Fixture {
     wf->set_exec(exec);
   }
 
-  std::array<uint64_t, WF_SIZE> run(Instruction *inst, bool f64, uint32_t rot, uint64_t exec) {
+  std::array<uint64_t, WF_SIZE> run(Instruction *inst, bool f64, uint32_t rot, uint64_t exec,
+                                    bool scalar_only) {
     seed_inputs(f64, rot, exec);
-    cu->execute_instruction(inst, *wf);
+    if (scalar_only)
+      cu->scalar_execute_instruction(inst, *wf);
+    else
+      cu->execute_instruction(inst, *wf);
     std::array<uint64_t, WF_SIZE> out{};
     uint32_t vb = wf->vgpr_alloc().base;
     for (uint32_t lane = 0; lane < WF_SIZE; ++lane) {
@@ -144,20 +146,10 @@ struct Fixture {
   }
 };
 
-// Restores the process force-scalar gate on scope exit so flipping it for an
-// in-process A/B comparison cannot leak into later tests in the same process.
-struct ForceScalarGuard {
-  bool orig;
-  ForceScalarGuard() : orig(util::force_scalar()) {}
-  ~ForceScalarGuard() { util::set_force_scalar_for_testing(orig); }
-};
-
 void check_case(const Case &c, uint32_t abs, uint32_t neg, uint32_t omod, uint32_t clamp,
                 uint64_t exec) {
-  ForceScalarGuard gate_guard;
 
   auto run_mode = [&](bool force_scalar, uint32_t rot) -> std::array<uint64_t, WF_SIZE> {
-    util::set_force_scalar_for_testing(force_scalar);
     Fixture fx;
     EXPECT_NE(fx.cu, nullptr);
     EXPECT_NE(fx.wf, nullptr);
@@ -167,7 +159,7 @@ void check_case(const Case &c, uint32_t abs, uint32_t neg, uint32_t omod, uint32
                 words);
     Instruction *inst = fx.decoder->decode(words);
     EXPECT_NE(inst, nullptr) << c.name << " decode failed";
-    auto out = fx.run(inst, c.f64, rot, exec);
+    auto out = fx.run(inst, c.f64, rot, exec, force_scalar);
     delete inst;
     return out;
   };

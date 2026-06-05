@@ -10,13 +10,11 @@
 /// vcc_in) runs TWICE in the same process -- once forcing the scalar body, once
 /// the SIMD fast path, with identical inputs/EXEC/VCC-in -- and the full 64-bit
 /// VCC compare results are asserted equal with EXPECT_EQ
-/// (util::set_force_scalar_for_testing flips the gate in-process). In-process
+/// (cu->scalar_execute_instruction selects the scalar path in-process). In-process
 /// inactive-lane VCC bits must stay
 /// preserved under full and partial EXEC. The 64-bit relations exercise the
 /// split lo/hi VGPR-pair read path. Inputs seed NaN/±Inf/±0/denorm (floats) and
 /// signed/extreme boundaries (ints); float compares are bit-exact in both modes.
-
-#include "util/simd_test_hooks.h"
 
 #include "rocjitsu/code/rj_code.h"
 #include "rocjitsu/isa/arch/amdgpu/shared/execute_shared.h"
@@ -124,9 +122,12 @@ struct Fixture {
     wf->set_vcc(vcc_in);
   }
 
-  uint64_t run(Instruction *inst, Kind k, uint64_t exec, uint64_t vcc_in) {
+  uint64_t run(Instruction *inst, Kind k, uint64_t exec, uint64_t vcc_in, bool scalar_only) {
     seed_inputs(k, exec, vcc_in);
-    cu->execute_instruction(inst, *wf);
+    if (scalar_only)
+      cu->scalar_execute_instruction(inst, *wf);
+    else
+      cu->execute_instruction(inst, *wf);
     return wf->vcc();
   }
 };
@@ -157,23 +158,13 @@ std::vector<VopcCase> all_cases() {
   return cs;
 }
 
-// Restores the process force-scalar gate on scope exit so flipping it for an
-// in-process A/B comparison cannot leak into later tests in the same process.
-struct ForceScalarGuard {
-  bool orig;
-  ForceScalarGuard() : orig(util::force_scalar()) {}
-  ~ForceScalarGuard() { util::set_force_scalar_for_testing(orig); }
-};
-
 void check_all(uint64_t exec) {
-  ForceScalarGuard gate_guard;
 
   const uint64_t kVcc[] = {0x0000000000000000ULL, 0xFFFFFFFFFFFFFFFFULL, 0xA5A5A5A5A5A5A5A5ULL};
 
   // Runs one (case, vcc_in) in the requested execute mode (fresh Fixture +
   // decode per run isolates VGPR/VCC state).
   auto run_mode = [&](bool force_scalar, const VopcCase &c, uint64_t vcc_in) -> uint64_t {
-    util::set_force_scalar_for_testing(force_scalar);
     Fixture fx;
     EXPECT_NE(fx.cu, nullptr);
     EXPECT_NE(fx.wf, nullptr);
@@ -183,7 +174,7 @@ void check_all(uint64_t exec) {
     uint32_t words[4] = {enc, 0u, 0u, 0u};
     Instruction *inst = fx.decoder->decode(words);
     EXPECT_NE(inst, nullptr) << "VOPC opcode " << c.opcode << " decode failed";
-    uint64_t vcc = fx.run(inst, c.kind, exec, vcc_in);
+    uint64_t vcc = fx.run(inst, c.kind, exec, vcc_in, force_scalar);
     delete inst;
     return vcc;
   };

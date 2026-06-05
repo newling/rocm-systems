@@ -9,7 +9,7 @@
 /// existing VOPC glue. Each case runs TWICE in the same process -- once forcing
 /// the scalar body, once the SIMD fast path, with identical inputs/EXEC/VCC-in
 /// -- and the full 64-bit VCC results are asserted equal with EXPECT_EQ
-/// (util::set_force_scalar_for_testing flips the gate in-process). In-process
+/// (cu->scalar_execute_instruction selects the scalar path in-process). In-process
 /// inactive-lane VCC bits must stay preserved under full and partial EXEC.
 ///
 /// f16 and f32 read src0 as 32-bit raw bits; f64 reads src0 as a 64-bit VGPR pair
@@ -17,8 +17,6 @@
 /// classification is pure bit decode (matching the scalar isnan/isnormal/signbit
 /// outcomes for every input incl. NaN payload), so the compare is bit-exact with
 /// no carve-out.
-
-#include "util/simd_test_hooks.h"
 
 #include "rocjitsu/code/rj_code.h"
 #include "rocjitsu/isa/arch/amdgpu/shared/execute_shared.h"
@@ -194,27 +192,21 @@ struct Fixture {
     wf->set_vcc(vcc_in);
   }
 
-  uint64_t run(Instruction *inst, Kind k, uint32_t rot, uint64_t exec, uint64_t vcc_in) {
+  uint64_t run(Instruction *inst, Kind k, uint32_t rot, uint64_t exec, uint64_t vcc_in,
+               bool scalar_only) {
     seed_inputs(k, rot, exec, vcc_in);
-    cu->execute_instruction(inst, *wf);
+    if (scalar_only)
+      cu->scalar_execute_instruction(inst, *wf);
+    else
+      cu->execute_instruction(inst, *wf);
     return wf->vcc();
   }
 };
 
-// Restores the process force-scalar gate on scope exit so flipping it for an
-// in-process A/B comparison cannot leak into later tests in the same process.
-struct ForceScalarGuard {
-  bool orig;
-  ForceScalarGuard() : orig(util::force_scalar()) {}
-  ~ForceScalarGuard() { util::set_force_scalar_for_testing(orig); }
-};
-
 void check_all(uint64_t exec) {
-  ForceScalarGuard gate_guard;
   const uint64_t kVcc[] = {0x0000000000000000ULL, 0xFFFFFFFFFFFFFFFFULL, 0xA5A5A5A5A5A5A5A5ULL};
   for (const auto &c : kCases) {
     auto run_mode = [&](bool force_scalar, uint32_t rot, uint64_t vcc_in) -> uint64_t {
-      util::set_force_scalar_for_testing(force_scalar);
       Fixture fx;
       EXPECT_NE(fx.cu, nullptr);
       EXPECT_NE(fx.wf, nullptr);
@@ -223,7 +215,7 @@ void check_all(uint64_t exec) {
       uint32_t words[4] = {enc, 0u, 0u, 0u};
       Instruction *inst = fx.decoder->decode(words);
       EXPECT_NE(inst, nullptr) << c.name << " decode failed";
-      uint64_t vcc = fx.run(inst, c.kind, rot, exec, vcc_in);
+      uint64_t vcc = fx.run(inst, c.kind, rot, exec, vcc_in, force_scalar);
       delete inst;
       return vcc;
     };
@@ -260,14 +252,12 @@ const std::array<Vop3ClassCase, 3> kVop3Cases = {{
 }};
 
 void check_all_vop3(uint64_t exec) {
-  ForceScalarGuard gate_guard;
   const uint64_t kVcc[] = {0x0000000000000000ULL, 0xFFFFFFFFFFFFFFFFULL, 0xA5A5A5A5A5A5A5A5ULL};
   for (const auto &c : kVop3Cases) {
     const uint32_t src1 = 256u + ((c.kind == Kind::F64) ? 2u : 1u); // mask vgpr
     for (uint32_t abs = 0; abs <= 1; ++abs) {
       for (uint32_t neg = 0; neg <= 1; ++neg) {
         auto run_mode = [&](bool force_scalar, uint32_t rot, uint64_t vcc_in) -> uint64_t {
-          util::set_force_scalar_for_testing(force_scalar);
           Fixture fx;
           EXPECT_NE(fx.cu, nullptr);
           EXPECT_NE(fx.wf, nullptr);
@@ -275,7 +265,7 @@ void check_all_vop3(uint64_t exec) {
           vop3_encode(c.opcode, /*vdst=*/kVccSdst, /*src0=*/256, src1, abs, neg, words);
           Instruction *inst = fx.decoder->decode(words);
           EXPECT_NE(inst, nullptr) << c.name << " decode failed";
-          uint64_t vcc = fx.run(inst, c.kind, rot, exec, vcc_in);
+          uint64_t vcc = fx.run(inst, c.kind, rot, exec, vcc_in, force_scalar);
           delete inst;
           return vcc;
         };

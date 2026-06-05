@@ -13,12 +13,10 @@
 /// lanes and the comparison stays meaningful on the rest). Each op runs TWICE
 /// in the same process -- once forcing the scalar body, once the SIMD fast path,
 /// with identical seed/inputs/EXEC -- and the two result arrays are asserted
-/// equal per active, non-skipped lane (util::set_force_scalar_for_testing flips
-/// the gate in-process). The inputs deliberately pair up
+/// equal per active, non-skipped lane (cu->scalar_execute_instruction selects the scalar path
+/// the path in-process). The inputs deliberately pair up
 /// ±0 and NaN in both operand orders on the low lanes — the corner cases the
 /// earlier (reverted) f16 min/max shipped without and silently diverged on.
-
-#include "util/simd_test_hooks.h"
 
 #include "rocjitsu/code/rj_code.h"
 #include "rocjitsu/isa/arch/amdgpu/shared/execute_shared.h"
@@ -169,16 +167,7 @@ const MinMaxCase kCases[] = {
     {"v_min_f16", 46, true},
 };
 
-// Restores the process force-scalar gate on scope exit so flipping it for an
-// in-process A/B comparison cannot leak into later tests in the same process.
-struct ForceScalarGuard {
-  bool orig;
-  ForceScalarGuard() : orig(util::force_scalar()) {}
-  ~ForceScalarGuard() { util::set_force_scalar_for_testing(orig); }
-};
-
 void check_case(const MinMaxCase &c, uint64_t exec) {
-  ForceScalarGuard gate_guard;
 
   constexpr uint64_t SEED = 0x3E12'7777'1234ULL;
 
@@ -188,7 +177,6 @@ void check_case(const MinMaxCase &c, uint64_t exec) {
   // modes. The accepted-divergence (NaN-payload / signed-zero tie) lane set is
   // computed from the inputs, identical in both runs.
   auto run_mode = [&](bool force_scalar) -> std::array<uint32_t, WF_SIZE> {
-    util::set_force_scalar_for_testing(force_scalar);
     Fixture fx;
     EXPECT_NE(fx.cu, nullptr);
     EXPECT_NE(fx.wf, nullptr);
@@ -197,7 +185,10 @@ void check_case(const MinMaxCase &c, uint64_t exec) {
     Instruction *inst = fx.decoder->decode(words);
     EXPECT_NE(inst, nullptr) << c.label << ": decode failed";
     nan_lane = fx.seed_inputs(SEED, c.is_f16, exec);
-    fx.cu->execute_instruction(inst, *fx.wf);
+    if (force_scalar)
+      fx.cu->scalar_execute_instruction(inst, *fx.wf);
+    else
+      fx.cu->execute_instruction(inst, *fx.wf);
     auto out = fx.snapshot_dst();
     delete inst;
     return out;

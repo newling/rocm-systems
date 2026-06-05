@@ -11,13 +11,11 @@
 /// TWICE in the same process -- once forcing the scalar body, once the SIMD fast
 /// path, with identical seed/inputs/EXEC/VCC-in -- and the scalar-vs-SIMD
 /// equivalence on BOTH the 64-lane destination AND the full 64-bit VCC is
-/// asserted with EXPECT_EQ (util::set_force_scalar_for_testing flips the gate
+/// asserted with EXPECT_EQ (cu->scalar_execute_instruction selects the scalar path
 /// in-process). Inputs deliberately seed the
 /// 32-bit carry/borrow boundary (0xFFFFFFFF+1, a<b, a==b+cin, ...) on the low
 /// lanes — random-only inputs hide these corners. In-process the test still
 /// checks inactive-lane dst/VCC preservation under full and partial EXEC masks.
-
-#include "util/simd_test_hooks.h"
 
 #include "rocjitsu/code/rj_code.h"
 #include "rocjitsu/isa/arch/amdgpu/shared/execute_shared.h"
@@ -115,9 +113,12 @@ struct Fixture {
     uint64_t vcc = 0;
   };
 
-  Result run(Instruction *inst, uint64_t seed, uint64_t exec, uint64_t vcc_in) {
+  Result run(Instruction *inst, uint64_t seed, uint64_t exec, uint64_t vcc_in, bool scalar_only) {
     seed_inputs(seed, exec, vcc_in);
-    cu->execute_instruction(inst, *wf);
+    if (scalar_only)
+      cu->scalar_execute_instruction(inst, *wf);
+    else
+      cu->execute_instruction(inst, *wf);
     Result res;
     uint32_t vbase = wf->vgpr_alloc().base;
     for (uint32_t lane = 0; lane < WF_SIZE; ++lane)
@@ -144,23 +145,13 @@ const uint64_t kVccPatterns[] = {
     0x5555555555555555ULL, 0x0123456789ABCDEFULL,
 };
 
-// Restores the process force-scalar gate on scope exit so flipping it for an
-// in-process A/B comparison cannot leak into later tests in the same process.
-struct ForceScalarGuard {
-  bool orig;
-  ForceScalarGuard() : orig(util::force_scalar()) {}
-  ~ForceScalarGuard() { util::set_force_scalar_for_testing(orig); }
-};
-
 void check_case(const CarryCase &c, uint64_t exec) {
-  ForceScalarGuard gate_guard;
 
   constexpr uint64_t SEED = 0xC0FFEE'1234'5678ULL;
 
   // Runs one (case, vcc_in) in the requested execute mode (fresh Fixture +
   // decode per run isolates VGPR/VCC state).
   auto run_mode = [&](bool force_scalar, uint64_t vcc_in) -> Fixture::Result {
-    util::set_force_scalar_for_testing(force_scalar);
     Fixture fx;
     EXPECT_NE(fx.cu, nullptr);
     EXPECT_NE(fx.wf, nullptr);
@@ -168,7 +159,7 @@ void check_case(const CarryCase &c, uint64_t exec) {
     uint32_t words[4] = {enc, 0u, 0u, 0u};
     Instruction *inst = fx.decoder->decode(words);
     EXPECT_NE(inst, nullptr) << c.label << ": decode failed";
-    auto out = fx.run(inst, SEED, exec, vcc_in);
+    auto out = fx.run(inst, SEED, exec, vcc_in, force_scalar);
     delete inst;
     return out;
   };

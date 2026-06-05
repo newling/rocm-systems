@@ -11,10 +11,8 @@
 /// immutable); each (case, abs, neg, rot, vcc_in) runs TWICE in the same process
 /// -- once forcing the scalar body, once the SIMD fast path, with identical
 /// inputs/EXEC/VCC-in -- and the 64-bit compare results are asserted equal with
-/// EXPECT_EQ (util::set_force_scalar_for_testing flips the gate in-process).
+/// EXPECT_EQ (cu->scalar_execute_instruction selects the scalar path in-process).
 /// In-process inactive SGPR-pair bits must be preserved.
-
-#include "util/simd_test_hooks.h"
 
 #include "rocjitsu/code/rj_code.h"
 #include "rocjitsu/isa/arch/amdgpu/shared/execute_shared.h"
@@ -121,29 +119,22 @@ struct Fixture {
     wf->set_vcc(vcc_in);
   }
 
-  uint64_t run(Instruction *inst, uint32_t rot, uint64_t exec, uint64_t vcc_in) {
+  uint64_t run(Instruction *inst, uint32_t rot, uint64_t exec, uint64_t vcc_in, bool scalar_only) {
     seed_inputs(rot, exec, vcc_in);
-    cu->execute_instruction(inst, *wf);
+    if (scalar_only)
+      cu->scalar_execute_instruction(inst, *wf);
+    else
+      cu->execute_instruction(inst, *wf);
     return wf->vcc();
   }
 };
 
-// Restores the process force-scalar gate on scope exit so flipping it for an
-// in-process A/B comparison cannot leak into later tests in the same process.
-struct ForceScalarGuard {
-  bool orig;
-  ForceScalarGuard() : orig(util::force_scalar()) {}
-  ~ForceScalarGuard() { util::set_force_scalar_for_testing(orig); }
-};
-
 void check_case(const Case &c, uint64_t exec) {
-  ForceScalarGuard gate_guard;
 
   // Runs one (case, abs, neg, rot, vcc_in) in the requested execute mode (fresh
   // Fixture + decode per run isolates VGPR/VCC state).
   auto run_mode = [&](bool force_scalar, uint32_t abs, uint32_t neg, uint32_t rot,
                       uint64_t vcc_in) -> uint64_t {
-    util::set_force_scalar_for_testing(force_scalar);
     Fixture fx;
     EXPECT_NE(fx.cu, nullptr);
     EXPECT_NE(fx.wf, nullptr);
@@ -151,7 +142,7 @@ void check_case(const Case &c, uint64_t exec) {
     vop3_cmp_encode(c.opcode, /*vdst=*/kVccSdst, /*src0=*/256, /*src1=*/257, abs, neg, words);
     Instruction *inst = fx.decoder->decode(words);
     EXPECT_NE(inst, nullptr) << c.name << " decode failed (abs=" << abs << " neg=" << neg << ")";
-    uint64_t vcc = fx.run(inst, rot, exec, vcc_in);
+    uint64_t vcc = fx.run(inst, rot, exec, vcc_in, force_scalar);
     delete inst;
     return vcc;
   };

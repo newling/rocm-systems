@@ -10,10 +10,8 @@
 /// no NaN so every value is compared exactly. Each case runs TWICE in the same
 /// process -- once forcing the scalar body, once the SIMD fast path, with
 /// identical inputs/EXEC -- and the f64 dst results are asserted equal with
-/// EXPECT_EQ (util::set_force_scalar_for_testing flips the gate in-process).
+/// EXPECT_EQ (cu->scalar_execute_instruction selects the scalar path in-process).
 /// In-process inactive lanes must keep the sentinel.
-
-#include "util/simd_test_hooks.h"
 
 #include "rocjitsu/code/rj_code.h"
 #include "rocjitsu/isa/arch/amdgpu/shared/execute_shared.h"
@@ -99,14 +97,6 @@ struct Fixture {
   }
 };
 
-// Restores the process force-scalar gate on scope exit so flipping it for an
-// in-process A/B comparison cannot leak into later tests in the same process.
-struct ForceScalarGuard {
-  bool orig;
-  ForceScalarGuard() : orig(util::force_scalar()) {}
-  ~ForceScalarGuard() { util::set_force_scalar_for_testing(orig); }
-};
-
 void compare_and_check_inactive(const char *name, uint64_t exec,
                                 const std::array<uint64_t, WF_SIZE> &scalar_out,
                                 const std::array<uint64_t, WF_SIZE> &simd_out,
@@ -125,9 +115,7 @@ void compare_and_check_inactive(const char *name, uint64_t exec,
 // Reverse shifts: src0 = v0 (32-bit count), src1 = v2:v3 (64-bit value),
 // dst = v6:v7.
 void check_revshift(const char *name, uint32_t op, uint64_t exec) {
-  ForceScalarGuard gate_guard;
   auto run = [&](bool force_scalar, uint32_t srot, uint32_t vrot) -> std::array<uint64_t, WF_SIZE> {
-    util::set_force_scalar_for_testing(force_scalar);
     Fixture fx;
     EXPECT_NE(fx.cu, nullptr);
     EXPECT_NE(fx.wf, nullptr);
@@ -142,7 +130,10 @@ void check_revshift(const char *name, uint32_t op, uint64_t exec) {
       fx.write64(vb + kDstVgpr, lane, dst_sentinel(lane));
     }
     fx.wf->set_exec(exec);
-    fx.cu->execute_instruction(inst, *fx.wf);
+    if (force_scalar)
+      fx.cu->scalar_execute_instruction(inst, *fx.wf);
+    else
+      fx.cu->execute_instruction(inst, *fx.wf);
     std::array<uint64_t, WF_SIZE> out{};
     for (uint32_t lane = 0; lane < WF_SIZE; ++lane)
       out[lane] = fx.read64(vb + kDstVgpr, lane);
@@ -161,9 +152,7 @@ void check_revshift(const char *name, uint32_t op, uint64_t exec) {
 // v_lshl_add_u64: src0 = v0:v1 (64-bit value), src1 = v2 (32-bit shift),
 // src2 = v4:v5 (64-bit addend), dst = v6:v7.
 void check_lshl_add(uint64_t exec) {
-  ForceScalarGuard gate_guard;
   auto run = [&](bool force_scalar, uint32_t srot, uint32_t crot) -> std::array<uint64_t, WF_SIZE> {
-    util::set_force_scalar_for_testing(force_scalar);
     Fixture fx;
     EXPECT_NE(fx.cu, nullptr);
     EXPECT_NE(fx.wf, nullptr);
@@ -179,7 +168,10 @@ void check_lshl_add(uint64_t exec) {
       fx.write64(vb + kDstVgpr, lane, dst_sentinel(lane));
     }
     fx.wf->set_exec(exec);
-    fx.cu->execute_instruction(inst, *fx.wf);
+    if (force_scalar)
+      fx.cu->scalar_execute_instruction(inst, *fx.wf);
+    else
+      fx.cu->execute_instruction(inst, *fx.wf);
     std::array<uint64_t, WF_SIZE> out{};
     for (uint32_t lane = 0; lane < WF_SIZE; ++lane)
       out[lane] = fx.read64(vb + kDstVgpr, lane);
@@ -198,9 +190,7 @@ void check_lshl_add(uint64_t exec) {
 // v_mad_u64_u32 / v_mad_i64_i32: src0 = v0 (32-bit), src1 = v2 (32-bit),
 // src2 = v4:v5 (64-bit addend), dst = v6:v7.
 void check_mad64(const char *name, uint32_t op, uint64_t exec) {
-  ForceScalarGuard gate_guard;
   auto run = [&](bool force_scalar, uint32_t arot, uint32_t crot) -> std::array<uint64_t, WF_SIZE> {
-    util::set_force_scalar_for_testing(force_scalar);
     Fixture fx;
     EXPECT_NE(fx.cu, nullptr);
     EXPECT_NE(fx.wf, nullptr);
@@ -216,7 +206,10 @@ void check_mad64(const char *name, uint32_t op, uint64_t exec) {
       fx.write64(vb + kDstVgpr, lane, dst_sentinel(lane));
     }
     fx.wf->set_exec(exec);
-    fx.cu->execute_instruction(inst, *fx.wf);
+    if (force_scalar)
+      fx.cu->scalar_execute_instruction(inst, *fx.wf);
+    else
+      fx.cu->execute_instruction(inst, *fx.wf);
     std::array<uint64_t, WF_SIZE> out{};
     for (uint32_t lane = 0; lane < WF_SIZE; ++lane)
       out[lane] = fx.read64(vb + kDstVgpr, lane);

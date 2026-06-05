@@ -8,8 +8,8 @@
 /// Each case runs TWICE in the same process -- once forcing the scalar body,
 /// once the SIMD fast path, with identical inputs/EXEC/VCC-in -- and the
 /// scalar-vs-SIMD equivalence on the destination VGPR (and VCC for the carry
-/// forms) is asserted with EXPECT_EQ (util::set_force_scalar_for_testing flips
-/// the gate in-process). In-process inactive lanes must keep the sentinel.
+/// forms) is asserted with EXPECT_EQ (cu->scalar_execute_instruction selects the scalar path
+/// the path in-process). In-process inactive lanes must keep the sentinel.
 ///
 /// Ops covered:
 ///   VOP2 (6, RDNA-only naming):
@@ -25,8 +25,6 @@
 ///     SIMD_VOP1_UNARY twin fallback since the scalar body of each ignores
 ///     modifiers — verified inline in the regen for this slice) + 2 ints
 ///     missing from CDNA4 (v_minmax / v_maxmin u32/i32 are RDNA3+ only).
-
-#include "util/simd_test_hooks.h"
 
 #include "rocjitsu/code/rj_code.h"
 #include "rocjitsu/isa/arch/amdgpu/shared/execute_shared.h"
@@ -134,9 +132,12 @@ struct Fixture {
     uint64_t vcc = 0;
   };
 
-  Result run(Instruction *inst, uint32_t rot, uint64_t exec, uint64_t vcc_in) {
+  Result run(Instruction *inst, uint32_t rot, uint64_t exec, uint64_t vcc_in, bool scalar_only) {
     seed_inputs(rot, exec, vcc_in);
-    cu->execute_instruction(inst, *wf);
+    if (scalar_only)
+      cu->scalar_execute_instruction(inst, *wf);
+    else
+      cu->execute_instruction(inst, *wf);
     Result res;
     uint32_t vb = wf->vgpr_alloc().base;
     for (uint32_t lane = 0; lane < WF_SIZE; ++lane)
@@ -189,23 +190,13 @@ const uint64_t kVccPatterns[] = {
     0x0000000055555555ULL, 0x000000000123456FULL,
 };
 
-// Restores the process force-scalar gate on scope exit so flipping it for an
-// in-process A/B comparison cannot leak into later tests in the same process.
-struct ForceScalarGuard {
-  bool orig;
-  ForceScalarGuard() : orig(util::force_scalar()) {}
-  ~ForceScalarGuard() { util::set_force_scalar_for_testing(orig); }
-};
-
 void check_case(const VopCase &c, uint64_t exec) {
-  ForceScalarGuard gate_guard;
 
   const bool has_vcc_in = (c.kind == VopCase::Kind::VOP2_CARRY);
 
   // Runs one (case, vcc_in, rot) in the requested execute mode (fresh Fixture +
   // decode per run isolates VGPR/VCC state).
   auto run_mode = [&](bool force_scalar, uint64_t vcc_in, uint32_t rot) -> Fixture::Result {
-    util::set_force_scalar_for_testing(force_scalar);
     Fixture fx;
     EXPECT_NE(fx.cu, nullptr);
     EXPECT_NE(fx.wf, nullptr);
@@ -228,7 +219,7 @@ void check_case(const VopCase &c, uint64_t exec) {
     }
     Instruction *inst = fx.decoder->decode(words);
     EXPECT_NE(inst, nullptr) << c.name << ": decode failed";
-    auto out = fx.run(inst, rot, exec, vcc_in);
+    auto out = fx.run(inst, rot, exec, vcc_in, force_scalar);
     delete inst;
     return out;
   };

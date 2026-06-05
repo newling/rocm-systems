@@ -6,7 +6,7 @@
 /// division helpers on CDNA4. Each case runs TWICE in the same process -- once
 /// forcing the scalar body, once the SIMD fast path, with identical inputs/EXEC
 /// -- and the results are asserted equal per active, non-skipped lane
-/// (util::set_force_scalar_for_testing flips the gate in-process). NaN-result
+/// (cu->scalar_execute_instruction selects the scalar path in-process). NaN-result
 /// lanes carry an accepted payload divergence and are excluded from the
 /// comparison — NaN-ness is deterministic from the inputs, so both runs skip the
 /// same lanes. In-process inactive lanes must keep the sentinel. The helpers
@@ -22,8 +22,6 @@
 /// NaN-input lanes are skipped per-lane in the comparison (the gcc-13 packed
 /// FMA quiets a different NaN operand vs scalar std::fma — accepted
 /// divergence shared with the rest of the ternary fp suite).
-
-#include "util/simd_test_hooks.h"
 
 #include "rocjitsu/code/rj_code.h"
 #include "rocjitsu/isa/arch/amdgpu/shared/execute_shared.h"
@@ -152,10 +150,14 @@ struct Fixture {
   }
 
   std::array<uint32_t, WF_SIZE> run32(Instruction *inst, uint32_t rot0, uint32_t rot1,
-                                      uint32_t rot2, uint64_t exec, uint64_t vcc) {
+                                      uint32_t rot2, uint64_t exec, uint64_t vcc,
+                                      bool scalar_only) {
     seed_vgprs_f32(rot0, rot1, rot2, exec);
     wf->set_vcc(vcc);
-    cu->execute_instruction(inst, *wf);
+    if (scalar_only)
+      cu->scalar_execute_instruction(inst, *wf);
+    else
+      cu->execute_instruction(inst, *wf);
     std::array<uint32_t, WF_SIZE> out{};
     uint32_t vb = wf->vgpr_alloc().base;
     for (uint32_t lane = 0; lane < WF_SIZE; ++lane)
@@ -164,10 +166,14 @@ struct Fixture {
   }
 
   std::array<uint64_t, WF_SIZE> run64(Instruction *inst, uint32_t rot0, uint32_t rot1,
-                                      uint32_t rot2, uint64_t exec, uint64_t vcc) {
+                                      uint32_t rot2, uint64_t exec, uint64_t vcc,
+                                      bool scalar_only) {
     seed_vgprs_f64(rot0, rot1, rot2, exec);
     wf->set_vcc(vcc);
-    cu->execute_instruction(inst, *wf);
+    if (scalar_only)
+      cu->scalar_execute_instruction(inst, *wf);
+    else
+      cu->execute_instruction(inst, *wf);
     std::array<uint64_t, WF_SIZE> out{};
     uint32_t vb = wf->vgpr_alloc().base;
     for (uint32_t lane = 0; lane < WF_SIZE; ++lane) {
@@ -179,16 +185,7 @@ struct Fixture {
   }
 };
 
-// Restores the process force-scalar gate on scope exit so flipping it for an
-// in-process A/B comparison cannot leak into later tests in the same process.
-struct ForceScalarGuard {
-  bool orig;
-  ForceScalarGuard() : orig(util::force_scalar()) {}
-  ~ForceScalarGuard() { util::set_force_scalar_for_testing(orig); }
-};
-
 void check_div_fixup_f32(uint64_t exec) {
-  ForceScalarGuard gate_guard;
   // v_div_fixup_f32 (478) plus the _f16 / _legacy_f16 twins (519 / 495): the
   // generated CDNA4 bodies for the f16 forms read/write raw f32 (bit_cast,
   // not f16_to_f32), so all three share the f32 div_fixup cascade and are
@@ -201,7 +198,6 @@ void check_div_fixup_f32(uint64_t exec) {
                       Op{495, "v_div_fixup_legacy_f16_vop3"}}) {
     auto run_mode = [&](bool force_scalar, uint32_t r1,
                         uint32_t r2) -> std::array<uint32_t, WF_SIZE> {
-      util::set_force_scalar_for_testing(force_scalar);
       Fixture fx;
       EXPECT_NE(fx.cu, nullptr);
       EXPECT_NE(fx.wf, nullptr);
@@ -210,7 +206,7 @@ void check_div_fixup_f32(uint64_t exec) {
                        /*src2=*/258, words);
       Instruction *inst = fx.decoder->decode(words);
       EXPECT_NE(inst, nullptr) << o.name << " decode failed";
-      auto out = fx.run32(inst, 0, r1, r2, exec, /*vcc=*/0);
+      auto out = fx.run32(inst, 0, r1, r2, exec, /*vcc=*/0, force_scalar);
       delete inst;
       return out;
     };
@@ -240,10 +236,8 @@ void check_div_fixup_f32(uint64_t exec) {
 }
 
 void check_div_fixup_f64(uint64_t exec) {
-  ForceScalarGuard gate_guard;
   auto run_mode = [&](bool force_scalar, uint32_t r1,
                       uint32_t r2) -> std::array<uint64_t, WF_SIZE> {
-    util::set_force_scalar_for_testing(force_scalar);
     Fixture fx;
     EXPECT_NE(fx.cu, nullptr);
     EXPECT_NE(fx.wf, nullptr);
@@ -254,7 +248,7 @@ void check_div_fixup_f64(uint64_t exec) {
                      /*src2=*/260, words);
     Instruction *inst = fx.decoder->decode(words);
     EXPECT_NE(inst, nullptr) << "v_div_fixup_f64_vop3 decode failed";
-    auto out = fx.run64(inst, 0, r1, r2, exec, /*vcc=*/0);
+    auto out = fx.run64(inst, 0, r1, r2, exec, /*vcc=*/0, force_scalar);
     delete inst;
     return out;
   };
@@ -283,10 +277,8 @@ void check_div_fixup_f64(uint64_t exec) {
 }
 
 void check_div_fmas_f32(uint64_t exec) {
-  ForceScalarGuard gate_guard;
   auto run_mode = [&](bool force_scalar, uint64_t vcc,
                       uint32_t r1) -> std::array<uint32_t, WF_SIZE> {
-    util::set_force_scalar_for_testing(force_scalar);
     Fixture fx;
     EXPECT_NE(fx.cu, nullptr);
     EXPECT_NE(fx.wf, nullptr);
@@ -295,7 +287,7 @@ void check_div_fmas_f32(uint64_t exec) {
                      /*src2=*/258, words);
     Instruction *inst = fx.decoder->decode(words);
     EXPECT_NE(inst, nullptr) << "v_div_fmas_f32_vop3 decode failed";
-    auto out = fx.run32(inst, 0, r1, 2 * r1, exec, vcc);
+    auto out = fx.run32(inst, 0, r1, 2 * r1, exec, vcc, force_scalar);
     delete inst;
     return out;
   };
@@ -327,10 +319,8 @@ void check_div_fmas_f32(uint64_t exec) {
 }
 
 void check_div_fmas_f64(uint64_t exec) {
-  ForceScalarGuard gate_guard;
   auto run_mode = [&](bool force_scalar, uint64_t vcc,
                       uint32_t r1) -> std::array<uint64_t, WF_SIZE> {
-    util::set_force_scalar_for_testing(force_scalar);
     Fixture fx;
     EXPECT_NE(fx.cu, nullptr);
     EXPECT_NE(fx.wf, nullptr);
@@ -339,7 +329,7 @@ void check_div_fmas_f64(uint64_t exec) {
                      /*src2=*/260, words);
     Instruction *inst = fx.decoder->decode(words);
     EXPECT_NE(inst, nullptr) << "v_div_fmas_f64_vop3 decode failed";
-    auto out = fx.run64(inst, 0, r1, 2 * r1, exec, vcc);
+    auto out = fx.run64(inst, 0, r1, 2 * r1, exec, vcc, force_scalar);
     delete inst;
     return out;
   };
