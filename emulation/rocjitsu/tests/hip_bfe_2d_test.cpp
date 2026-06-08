@@ -7,7 +7,6 @@
 // and only half the output is written.
 
 #include <hip/hip_runtime.h>
-#include <unistd.h>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -16,7 +15,7 @@ int main(int argc, char **argv) {
   ::testing::InitGoogleTest(&argc, argv);
   int rc = RUN_ALL_TESTS();
   (void)hipDeviceReset();
-  _exit(rc);
+  return rc;
 }
 
 #define HIP_ASSERT(call)                                                                           \
