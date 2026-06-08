@@ -453,7 +453,13 @@ if(HIPCC_EXECUTABLE AND HSA_RUNTIME64)
 
     # Helper: register a HIP test case run through the CLI launcher.
     function(rj_add_hip_test_case TEST_BIN TEST_CASE)
-        cmake_parse_arguments(ARG "" "CONFIG;NAME" "" ${ARGN})
+        cmake_parse_arguments(
+            ARG
+            ""
+            "CONFIG;NAME;TIMEOUT"
+            "ENVIRONMENT"
+            ${ARGN}
+        )
         if(NOT ARG_CONFIG)
             set(ARG_CONFIG ${RJ_CDNA4_KMD_CONFIG})
         endif()
@@ -467,6 +473,16 @@ if(HIPCC_EXECUTABLE AND HSA_RUNTIME64)
                 ${CMAKE_CURRENT_BINARY_DIR}/${TEST_BIN}
                 --gtest_filter=${TEST_CASE}
         )
+        if(ARG_ENVIRONMENT)
+            list(JOIN ARG_ENVIRONMENT ";" _ENV_STR)
+            set_tests_properties(
+                ${ARG_NAME}
+                PROPERTIES ENVIRONMENT "${_ENV_STR}"
+            )
+        endif()
+        if(ARG_TIMEOUT)
+            set_tests_properties(${ARG_NAME} PROPERTIES TIMEOUT ${ARG_TIMEOUT})
+        endif()
     endfunction()
 
     rj_add_hip_test(hip_memcpy_test)
@@ -604,6 +620,22 @@ if(HIPCC_EXECUTABLE AND HSA_RUNTIME64)
 
     rj_add_hip_test(hip_bfe_2d_test)
     rj_add_hip_test_case(hip_bfe_2d_test "BfeRegressionTest.ThreadIdxY")
+
+    # --- Logging plugin end-to-end test ---
+    rj_add_hip_test(hip_logging_test SOURCE logging/hip_logging_test.hip)
+    set(LOGGING_SINK_DIR ${CMAKE_CURRENT_BINARY_DIR}/logging_test_output)
+    set(LOGGING_RUNTIME_DIR ${LOGGING_SINK_DIR}/runtime)
+    file(MAKE_DIRECTORY ${LOGGING_SINK_DIR})
+    file(MAKE_DIRECTORY ${LOGGING_RUNTIME_DIR})
+    rj_add_hip_test_case(
+        hip_logging_test "LoggingTest.dispatch_logged"
+        TIMEOUT 30
+        ENVIRONMENT
+            "ROCJITSU_RUNTIME_DIR=${LOGGING_RUNTIME_DIR}"
+            "RJ_LOG=1"
+            "RJ_SINKS=file"
+            "RJ_SINK_DIR=${LOGGING_SINK_DIR}"
+    )
 
     message(STATUS "HIP tests enabled (found ${HIPCC_EXECUTABLE})")
 else()
