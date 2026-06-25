@@ -99,14 +99,50 @@ RJ_RACE=1 build/tools/rocjitsu/rocjitsu --config configs/amdgpu_cdna4.json -- ./
 RJ_RACE=1 build/tools/rocjitsu/rocjitsu --config configs/amdgpu_cdna4.json -- python my_script.py
 ```
 
+For Python frameworks and other workloads that spawn helper processes,
+prefer daemon mode:
+
+```bash
+RJ_RACE=1 build/tools/rocjitsu/rocjitsu \
+  --daemon \
+  --config configs/amdgpu_cdna4_kmd.json \
+  -- python my_script.py
+```
+
 To capture reports to a file instead of stderr, set `RJ_SINKS=file` and
 `RJ_SINK_DIR`:
 
 ```bash
+mkdir -p /tmp/output
 RJ_RACE=1 RJ_SINKS=file RJ_SINK_DIR=/tmp/output \
   build/tools/rocjitsu/rocjitsu --config configs/amdgpu_cdna4.json -- ./my_app
 # Reports are written to /tmp/output/race.log
 ```
+
+The file sink directory must already exist. If the directory is missing,
+the race report file cannot be created.
+
+### Optional functional-mode cache bypass
+
+For functional debugging where cache behavior is not the subject of the
+investigation, `RJ_BYPASS_CACHE=1` can reduce runtime by bypassing the
+simulated global L1/L2 cache path for non-atomic global memory accesses:
+
+```bash
+mkdir -p /tmp/rocjitsu-race
+RJ_RACE=1 \
+RJ_BYPASS_CACHE=1 \
+RJ_SINKS=file \
+RJ_SINK_DIR=/tmp/rocjitsu-race \
+build/tools/rocjitsu/rocjitsu \
+  --daemon \
+  --config configs/amdgpu_cdna4_kmd.json \
+  -- python my_reproducer.py
+```
+
+`RJ_BYPASS_CACHE=1` is a functional-mode performance knob. It should not
+be used for tests that depend on cache timing or cache hierarchy
+behavior.
 
 ## What is a race?
 
@@ -253,6 +289,18 @@ ctest --test-dir build -R "RaceDetector|IntervalSet"
 # End-to-end HIP tests (RJ_RACE=1 is set automatically by ctest)
 ctest --test-dir build -R "RaceTest"
 ```
+
+The test names distinguish the two race-test families:
+
+- `RaceDetector.*` and `IntervalSet.*` are in-process unit tests in the
+  `rocjitsu_tests` binary. They do not launch HIP kernels.
+- `RaceTest.*` are end-to-end HIP tests. CTest runs the compiled
+  `hip_race_tests` binary through the rocjitsu CLI with `RJ_RACE=1`.
+
+On rocjitsu pull requests, the `rocjitsu-test-corpus` workflow's
+`test (release)` job runs the `RaceTest.*` HIP tests as part of the
+in-tree rocjitsu `ctest` step. The sanitizer matrix may build
+`hip_race_tests` but exclude the `RaceTest.*` executions.
 
 ## Limitations
 

@@ -47,6 +47,7 @@ This makes output testable and redirectable.
 When `file` is in `RJ_SINKS`, each plugin writes to
 `<RJ_SINK_DIR>/<plugin_name>.log`. Plugin names are fixed:
 `race` for `RaceDetectorPlugin`, `logging` for `KernelLoggingPlugin`.
+The sink directory must already exist.
 
 ### Examples
 
