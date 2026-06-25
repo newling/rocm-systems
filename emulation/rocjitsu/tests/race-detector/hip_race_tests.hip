@@ -350,6 +350,76 @@ TEST_F(RaceTest, lds_cross_wave_race) {
   EXPECT_NE(t.mark1.find("ds_read_b32"), npos) << "mark1: " << t.mark1;
 }
 
+// --- LDS cross-wave WAW ---
+//
+// These tests exercise write-after-write races between the two waves in a
+// 128-thread workgroup. The inline asm is used so the detector sees an explicit
+// ds_write_b32 followed by s_waitcnt lgkmcnt(0), with no compiler-inserted
+// barrier before the write.
+
+__attribute__((amdgpu_flat_work_group_size(128, 128)))
+__global__ void lds_waw_safe_kernel(int *out) {
+  __shared__ int lds[128];
+  int tid = threadIdx.x;
+  int val = tid + 100;
+
+  // Safe address pattern:
+  //   wave 0, lanes 0..63  write LDS words 0..63
+  //   wave 1, lanes 0..63  write LDS words 64..127
+  // The writes are concurrent and there is no barrier before them, but the
+  // waves write disjoint byte ranges, so there is no WAW hazard.
+  asm volatile(
+      "ds_write_b32 %0, %1\n"
+      "s_waitcnt lgkmcnt(0)\n"
+      :
+      : "v"(tid * static_cast<int>(sizeof(int))), "v"(val)
+      : "memory"
+  );
+  __syncthreads();
+  out[tid] = lds[tid];
+}
+
+__attribute__((amdgpu_flat_work_group_size(128, 128)))
+__global__ void lds_waw_race_kernel(int *out) {
+  __shared__ int lds[64];
+  int tid = threadIdx.x;
+  int lane = tid & 63;
+  int val = tid + 100;
+
+  // Racy address pattern:
+  //   wave 0, lanes 0..63  write LDS words 0..63
+  //   wave 1, lanes 0..63  also write LDS words 0..63
+  // Each wave waits for its own LDS write with s_waitcnt, but there is no
+  // s_barrier between waves. From wave 1's perspective, wave 0's writes are
+  // still live at workgroup scope, so the second write to the same byte range
+  // is a cross-wave WAW race.
+  asm volatile(
+      "ds_write_b32 %0, %1\n"
+      "s_waitcnt lgkmcnt(0)\n"
+      :
+      : "v"(lane * static_cast<int>(sizeof(int))), "v"(val)
+      : "memory"
+  );
+  __syncthreads();
+  out[tid] = lds[lane];
+}
+
+TEST_F(RaceTest, lds_waw) {
+  lds_waw_safe_kernel<<<1, 128>>>(alloc<int>(128));
+  sync();
+  ExpectNoRace();
+}
+
+TEST_F(RaceTest, lds_waw_race) {
+  lds_waw_race_kernel<<<1, 128>>>(alloc<int>(128));
+  sync();
+  auto r = records();
+  ASSERT_GE(r.size(), 1u);
+  auto t = parseTrace(r[0]);
+  EXPECT_NE(t.header.find("LDS"), npos);
+  EXPECT_NE(t.mark0.find("ds_write_b32"), npos) << "mark0: " << t.mark0;
+}
+
 // --- Global-to-LDS buffer ---
 // These kernels use buffer_load_dword with the LDS flag to load data from
 // global memory directly into LDS (bypassing VGPRs). Designed for 128-thread

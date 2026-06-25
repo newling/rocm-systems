@@ -51,10 +51,17 @@ std::optional<MarkedPc> findConflict(const RaceViolation &v, RaceDetector &detec
     }
   } else {
     assert(v.space == RaceViolation::Space::LDS && "unexpected RaceViolation space (expected LDS)");
-    const auto &events = v.isWrite ? detector.getLdsReadEvents() : detector.getLdsWriteEvents();
-    for (auto eid : events)
-      if (detector.events().ldsIntervals(eid).contains(v.index))
-        return make(eid);
+    auto scan = [&](const std::vector<EventId> &events) -> std::optional<MarkedPc> {
+      for (auto eid : events)
+        if (detector.events().ldsIntervals(eid).contains(v.index))
+          return make(eid);
+      return std::nullopt;
+    };
+    if (v.isWrite) {
+      if (auto conflict = scan(detector.getLdsReadEvents()))
+        return conflict;
+    }
+    return scan(detector.getLdsWriteEvents());
   }
   return std::nullopt;
 }

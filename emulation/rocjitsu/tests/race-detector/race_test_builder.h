@@ -87,6 +87,22 @@ public:
                                    /*registers=*/{}, laneMask, waveSize_, ldsAddrs, bytes);
   }
 
+  /// Register one LDS write instruction with per-lane addresses.
+  /// This mirrors the plugin path for a single vector LDS write: all active
+  /// lanes are validated before one combined memory event is registered.
+  void ldsWriteLanes(int wave, std::vector<uint32_t> ldsAddrs, int bytesPerLane,
+                     uint64_t exec = 0) {
+    if (!exec) {
+      exec = defaultExec_;
+    }
+    ldsAddrs.resize(waveSize_, 0);
+    forEachActiveLane(exec, waveSize_, [&](int lane) {
+      detector_->validateWrite(static_cast<int>(ldsAddrs[lane]), WaveId{wave}, lane, bytesPerLane);
+    });
+    waves_[wave]->registerLdsEvent(pc_++, MemoryEventType::VGPR_TO_LDS,
+                                   /*registers=*/{}, exec, waveSize_, ldsAddrs, bytesPerLane);
+  }
+
   /// Register an LDS read and validate against outstanding writes.
   /// byteMask: which bytes of the destination VGPR are written by this load
   /// (0xF=full, 0x3=lo D16, 0xC=hi D16). Used for byte-level race tracking.

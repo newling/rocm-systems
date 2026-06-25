@@ -97,12 +97,32 @@ void RaceDetector::validateWrite(int addr, WaveId wave, int lane, int nBytes) co
       break;
     }
   }
-  if (!anyReads) {
+  if (anyReads) {
+    for (EventId eventId : ldsReadEvents) {
+      if (wave == events_.waveId(eventId) &&
+          events_.status(eventId) == EventStatus::WAVE_COMPLETE) {
+        continue;
+      }
+      if (events_.ldsIntervals(eventId).overlapsRange(addr, addr + nBytes)) {
+        raceHandler({RaceViolation::Space::LDS, addr, wave.value, lane, true, workgroupId});
+      }
+    }
+  }
+
+  bool anyWrites = false;
+  limit = static_cast<int>(byteWriteCounts.size());
+  for (int c = cStart; c < cEnd; ++c) {
+    if (c < limit && byteWriteCounts[c] > 0) {
+      anyWrites = true;
+      break;
+    }
+  }
+  if (!anyWrites) {
     return;
   }
 
-  for (EventId eventId : ldsReadEvents) {
-    if (wave == events_.waveId(eventId) && events_.status(eventId) == EventStatus::WAVE_COMPLETE) {
+  for (EventId eventId : ldsWriteEvents) {
+    if (wave == events_.waveId(eventId)) {
       continue;
     }
     if (events_.ldsIntervals(eventId).overlapsRange(addr, addr + nBytes)) {

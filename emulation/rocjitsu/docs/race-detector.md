@@ -131,7 +131,8 @@ races. Some examples:
 - **SGPR races**: a scalar register is read before a pending scalar load has
   completed (`s_waitcnt lgkmcnt` insufficient).
 - **LDS races**: an LDS byte is read or written by one wave while another wave
-  has an outstanding write to the same byte, without an intervening `s_barrier`.
+  has an outstanding read or write to the same byte, without an intervening
+  `s_barrier`.
 
 Detection is at byte granularity: D16 (half-register) loads only flag races on
 the affected bytes, and LDS races are tracked per byte.
@@ -154,8 +155,9 @@ The plugin keeps track, for all registers and LDS memory bytes, of which memory
 operations are in flight. When an instruction in the emulator accesses an LDS
 byte, there is a check to see what memory events are still in flight that
 read/write that byte, from the perspective of the accessing thread. In this way,
-RAW (read-after-write) and WAR (write-after-read) hazards can be detected.
-Similar logic applies for VGPR and SGPR accesses.
+RAW (read-after-write), WAR (write-after-read), and cross-wave WAW
+(write-after-write) hazards can be detected. Similar logic applies for VGPR
+and SGPR accesses.
 
 **LDS race detection** uses coarse-grained counters (one per 16-byte chunk) for
 fast-path checks, with interval-based overlap scanning as a fallback. Live
@@ -266,10 +268,10 @@ ctest --test-dir build -R "RaceTest"
   (missing `s_waitcnt` and `s_barrier`). It does not detect inter-workgroup
   races, races between dispatches, or host-device synchronization issues.
 
-- **No WAW detection**: write-after-write hazards are not currently flagged.
-  This includes both LDS WAW (two waves writing to the same LDS byte without a
-  barrier) and VGPR WAW (an ALU instruction overwriting a register that has a
-  pending global load).
+- **Limited WAW detection**: cross-wave LDS write-after-write hazards are
+  flagged, but VGPR WAW is not currently detected. For example, an ALU
+  instruction can overwrite a register that has a pending global load without
+  being reported.
 
 - **Kernel name resolution**: kernel names in race reports may show as `"?"` if
   symbol information is not available in the code object.

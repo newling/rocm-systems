@@ -155,6 +155,36 @@ TEST(RaceDetector, LdsCrossWave_WarNoOverlap) {
   EXPECT_FALSE(b.hasRace());
 }
 
+TEST(RaceDetector, LdsCrossWave_WawMissingBarrier) {
+  // WAW: wave 0 writes LDS[0], waitcnt, then wave 1 writes to LDS[0]
+  // without barrier → RACE on the second write.
+  RaceTestBuilder b(/*numWaves=*/2, /*vgprs=*/8, /*sgprs=*/8);
+  b.ldsWrite(/*wave=*/0, /*lane=*/0, /*addr=*/0, /*bytes=*/4);
+  b.waitcnt(/*wave=*/0, /*vmcnt=*/-1, /*lgkmcnt=*/0);
+  // Missing barrier!
+  b.checkLdsWrite(/*wave=*/1, /*lane=*/0, /*addr=*/0, /*bytes=*/4);
+  EXPECT_TRUE(b.hasLdsRace(0));
+}
+
+TEST(RaceDetector, LdsCrossWave_WawWithBarrier) {
+  // WAW: wave 0 writes, waitcnt, barrier, then wave 1 writes → safe.
+  RaceTestBuilder b(/*numWaves=*/2, /*vgprs=*/8, /*sgprs=*/8);
+  b.ldsWrite(/*wave=*/0, /*lane=*/0, /*addr=*/0, /*bytes=*/4);
+  b.waitcnt(/*wave=*/0, /*vmcnt=*/-1, /*lgkmcnt=*/0);
+  b.barrier();
+  b.checkLdsWrite(/*wave=*/1, /*lane=*/0, /*addr=*/0, /*bytes=*/4);
+  EXPECT_FALSE(b.hasRace());
+}
+
+TEST(RaceDetector, LdsCrossWave_WawNoOverlap) {
+  // WAW: wave 0 writes LDS[0..4), wave 1 writes LDS[4..8) → safe.
+  RaceTestBuilder b(/*numWaves=*/2, /*vgprs=*/8, /*sgprs=*/8);
+  b.ldsWrite(/*wave=*/0, /*lane=*/0, /*addr=*/0, /*bytes=*/4);
+  b.waitcnt(/*wave=*/0, /*vmcnt=*/-1, /*lgkmcnt=*/0);
+  b.checkLdsWrite(/*wave=*/1, /*lane=*/0, /*addr=*/4, /*bytes=*/4);
+  EXPECT_FALSE(b.hasRace());
+}
+
 // ---- LDS same-wave races ----
 
 TEST(RaceDetector, LdsSameWave_WriteWriteOk) {
@@ -164,6 +194,15 @@ TEST(RaceDetector, LdsSameWave_WriteWriteOk) {
   RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/8, /*sgprs=*/8);
   b.ldsWrite(/*wave=*/0, /*lane=*/0, /*addr=*/0, /*bytes=*/4);
   b.ldsWrite(/*wave=*/0, /*lane=*/0, /*addr=*/0, /*bytes=*/4);
+  EXPECT_FALSE(b.hasRace());
+}
+
+TEST(RaceDetector, LdsSameWave_SameInstructionLaneCollisionOk) {
+  // Two lanes in the same wave write the same address as part of one vector LDS
+  // instruction. This documents current detector scope: cross-wave WAW hazards
+  // are reported, but same-instruction lane collisions inside one wave are not.
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/8, /*sgprs=*/8, /*waveSize=*/2);
+  b.ldsWriteLanes(/*wave=*/0, /*ldsAddrs=*/{0, 0}, /*bytesPerLane=*/4, /*exec=*/0x3);
   EXPECT_FALSE(b.hasRace());
 }
 
@@ -478,17 +517,15 @@ TEST(RaceDetector, LdsSameWave_ScatterBroadcastOk) {
 }
 
 TEST(RaceDetector, LdsSameWave_AllLanesWriteSameAddr) {
-  // All lanes write same address (WAW). Currently not detected as a race.
-  // TODO(newling): WAW detection is not implemented — this documents current
-  // behavior.
+  // Same-wave writes are treated as ordered when they arrive as separate
+  // events. This does not model multiple lanes in the same instruction writing
+  // the same address.
   RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/8, /*sgprs=*/8);
   b.ldsWrite(/*wave=*/0, /*lane=*/0, /*addr=*/0, /*bytes=*/4);
   b.ldsWrite(/*wave=*/0, /*lane=*/1, /*addr=*/0, /*bytes=*/4);
   b.ldsWrite(/*wave=*/0, /*lane=*/2, /*addr=*/0, /*bytes=*/4);
   b.waitcnt(/*wave=*/0, /*vmcnt=*/-1, /*lgkmcnt=*/0);
   b.checkLdsRead(/*wave=*/0, /*lane=*/0, /*addr=*/0, /*bytes=*/4);
-  // Currently passes (WAW not flagged). If WAW detection is added, this
-  // test should be updated to EXPECT_TRUE(b.hasRace()).
   EXPECT_FALSE(b.hasRace());
 }
 

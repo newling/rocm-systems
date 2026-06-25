@@ -51,9 +51,8 @@ public:
   /// Check for RAW hazards: no outstanding LDS writes overlap the range.
   void validateRead(int addr, WaveId, int lane, int nBytes) const;
 
-  /// Check for WAR hazards: no outstanding LDS reads overlap the range.
-  /// TODO(newling): WAW detection (write vs outstanding writes) is not
-  /// implemented.
+  /// Check for WAR/WAW hazards: no outstanding LDS reads or cross-wave writes
+  /// overlap the range.
   void validateWrite(int addr, WaveId, int lane, int nBytes) const;
 
   const EventRegistry &events() const { return events_; }
