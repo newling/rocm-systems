@@ -254,6 +254,11 @@ private:
   virtual void simd_notify_write(const amdgpu::Wavefront & /*wf*/, uint32_t /*lane_begin*/,
                                  uint32_t /*lane_end*/, uint8_t /*byte_mask*/) const {}
 
+  /// @brief Notify the plugin system that this operand's 64-bit VGPR pair was
+  /// written for lanes [lane_begin, lane_end). No-op for non-VGPR operands.
+  virtual void simd_notify_write64(const amdgpu::Wavefront & /*wf*/, uint32_t /*lane_begin*/,
+                                   uint32_t /*lane_end*/) const {}
+
   /// @brief 64-bit-lane counterpart of `simd_vgpr_storage`. A per-lane f64/i64
   /// value occupies two consecutive VGPRs (reg N + reg N+1), so this returns a
   /// `{lo, hi}` pair of typed register views (lo = reg N, hi = reg N+1) in a
@@ -325,6 +330,8 @@ public:
                         uint8_t byte_mask) const override;
   void simd_notify_write(const amdgpu::Wavefront &wf, uint32_t lane_begin, uint32_t lane_end,
                          uint8_t byte_mask) const override;
+  void simd_notify_write64(const amdgpu::Wavefront &wf, uint32_t lane_begin,
+                           uint32_t lane_end) const override;
 
 private:
   std::optional<uint32_t> simd_vgpr_base(const amdgpu::Wavefront &wf) const override;

@@ -467,7 +467,10 @@ inline void write_simd_at(VgprStorage *rd, const Op &op, Wavefront &wf, uint32_t
   static_assert(sizeof(T) == sizeof(uint32_t));
   constexpr std::size_t W = util::native_width_v<T>;
   if (rd) {
-    op.simd_notify_write(wf, base, base + static_cast<uint32_t>(W), 0xF);
+    for (std::size_t i = 0; i < W; ++i)
+      if (mask & (1ULL << i))
+        op.simd_notify_write(wf, base + static_cast<uint32_t>(i),
+                             base + static_cast<uint32_t>(i) + 1, 0xF);
     rd->template simd_store<T>(base, v, mask);
     return;
   }
@@ -487,7 +490,10 @@ inline void write_simd_narrow_at(VgprStorage *rd, const Op &op, Wavefront &wf, u
   static_assert(sizeof(T) == sizeof(uint32_t));
   constexpr std::size_t W = util::native_width64;
   if (rd) {
-    op.simd_notify_write(wf, base, base + static_cast<uint32_t>(W), 0xF);
+    for (std::size_t i = 0; i < W; ++i)
+      if (mask & (1ULL << i))
+        op.simd_notify_write(wf, base + static_cast<uint32_t>(i),
+                             base + static_cast<uint32_t>(i) + 1, 0xF);
     rd->template simd_store_narrow<T>(base, v, mask);
     return;
   }
@@ -585,6 +591,10 @@ inline void write_simd64_at(VgprStoragePair64 p, const Op &op, Wavefront &wf, ui
   static_assert(sizeof(T) == sizeof(uint64_t));
   constexpr std::size_t W = util::native_width64;
   if (p.lo) {
+    for (std::size_t i = 0; i < W; ++i)
+      if (mask & (1ULL << i))
+        op.simd_notify_write64(wf, base + static_cast<uint32_t>(i),
+                               base + static_cast<uint32_t>(i) + 1);
     p.lo->template simd_store64<T>(*p.hi, base, v, mask);
     return;
   }

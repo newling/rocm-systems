@@ -134,6 +134,17 @@ void AmdgpuIsaOperand<Isa>::simd_notify_write(const amdgpu::Wavefront &wf, uint3
 }
 
 template <typename Isa>
+void AmdgpuIsaOperand<Isa>::simd_notify_write64(const amdgpu::Wavefront &wf, uint32_t lane_begin,
+                                                uint32_t lane_end) const {
+  if (auto off = detail::resolved_vgpr_offset_for_operand<Isa>(wf, *this)) {
+    uint32_t voff = wf.gpr_idx_en() ? amdgpu::apply_gpr_idx(wf, *off, true) : *off;
+    uint32_t physical_reg = wf.vgpr_alloc().base + voff;
+    wf.cu().notify_vgpr_write(&wf, physical_reg, lane_begin, lane_end, 0xF);
+    wf.cu().notify_vgpr_write(&wf, physical_reg + 1, lane_begin, lane_end, 0xF);
+  }
+}
+
+template <typename Isa>
 amdgpu::ConstVgprStoragePair64
 AmdgpuIsaOperand<Isa>::simd_vgpr_storage64(const amdgpu::Wavefront &wf) const {
   if (this->delegate())

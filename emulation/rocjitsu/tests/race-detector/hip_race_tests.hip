@@ -1354,6 +1354,21 @@ __global__ void f64_vgpr_safe_kernel(const double *src, double *dst) {
   dst[tid] = result;
 }
 
+__global__ void f64_vgpr_waw_kernel(const double *src, double *dst) {
+  int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  double val;
+  double tmp = static_cast<double>(tid) + 1.0;
+  asm volatile(
+      "global_load_dwordx2 %0, %1, off\n"
+      // BUG: no s_waitcnt before f64 ALU write to the same VGPR pair.
+      // Use tmp as the source so this isolates WAW rather than RAW.
+      "v_fma_f64 %0, %2, 1.0, 1.0\n"
+      : "=&v"(val) : "v"(&src[tid]), "v"(tmp)
+  );
+  asm volatile("s_waitcnt vmcnt(0)\n" ::: "memory");
+  dst[tid] = val;
+}
+
 TEST_F(RaceTest, f64_vgpr_race) {
   double *src = allocWithData<double>(64);
   double *dst = alloc<double>(64);
@@ -1370,6 +1385,16 @@ TEST_F(RaceTest, f64_vgpr_safe) {
   f64_vgpr_safe_kernel<<<1, 64>>>(src, dst);
   sync();
   ExpectNoRace();
+}
+
+TEST_F(RaceTest, f64_vgpr_waw) {
+  double *src = allocWithData<double>(64);
+  double *dst = alloc<double>(64);
+  f64_vgpr_waw_kernel<<<1, 64>>>(src, dst);
+  sync();
+  auto r = records();
+  ASSERT_GE(r.size(), 1u);
+  EXPECT_EQ(r[0].type, "VGPR");
 }
 
 int main(int argc, char **argv) {
