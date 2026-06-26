@@ -1667,6 +1667,8 @@ void Operand::write_lane(amdgpu::Wavefront &wf, uint32_t lane, uint32_t val) con
   if (auto off = Isa::resolved_vgpr_offset(opr_type_, encoding_value_)) {
     uint32_t voff = wf.gpr_idx_en() ? amdgpu::apply_gpr_idx(wf, *off, true) : *off;
     uint32_t idx = wf.vgpr_alloc().base + voff;
+    // TODO(newling): audit other AMDGPU Operand::write_lane implementations
+    // before claiming non-SIMD VGPR WAW coverage outside CDNA4/gfx950.
     wf.cu().notify_vgpr_write(&wf, idx, lane, lane + 1);
     wf.cu().write_vgpr(idx, lane, val);
     return;

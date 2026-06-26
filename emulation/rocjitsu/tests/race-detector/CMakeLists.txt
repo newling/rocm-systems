@@ -59,6 +59,8 @@ rj_add_race_test_case(dual_offset_lds)
 rj_add_race_test_case(dual_offset_lds_race)
 rj_add_race_test_case(scratch_vmcnt)
 rj_add_race_test_case(scratch_vmcnt_race)
+# TODO(newling): add non-gfx950 WAW end-to-end coverage once VGPR write hooks
+# are audited across the other AMDGPU operand implementations.
 rj_add_race_test_case(waw_global_load_then_alu)
 rj_add_race_test_case(waw_lds_read_then_alu)
 rj_add_race_test_case(waw_global_load_then_lds_read)

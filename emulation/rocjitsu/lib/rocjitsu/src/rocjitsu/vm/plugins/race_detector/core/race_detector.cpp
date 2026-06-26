@@ -9,6 +9,8 @@
 namespace rocjitsu::plugins::race_detector {
 namespace {
 
+// TODO(newling): consider extending this model for non-gfx9* architectures if
+// their wait-count domains differ from the vmcnt/lgkmcnt split modeled here.
 enum class WaitDomain { Vmcnt, Lgkmcnt };
 
 WaitDomain waitDomain(MemoryEventType type) {
