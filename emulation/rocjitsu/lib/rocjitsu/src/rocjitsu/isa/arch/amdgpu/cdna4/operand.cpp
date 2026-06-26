@@ -1666,7 +1666,9 @@ void Operand::write_scalar(amdgpu::Wavefront &wf, uint32_t val) const {
 void Operand::write_lane(amdgpu::Wavefront &wf, uint32_t lane, uint32_t val) const {
   if (auto off = Isa::resolved_vgpr_offset(opr_type_, encoding_value_)) {
     uint32_t voff = wf.gpr_idx_en() ? amdgpu::apply_gpr_idx(wf, *off, true) : *off;
-    wf.cu().write_vgpr(wf.vgpr_alloc().base + voff, lane, val);
+    uint32_t idx = wf.vgpr_alloc().base + voff;
+    wf.cu().notify_vgpr_write(&wf, idx, lane, lane + 1);
+    wf.cu().write_vgpr(idx, lane, val);
     return;
   }
   throw std::logic_error("write_lane called on non-VGPR operand type");
@@ -1694,7 +1696,9 @@ void Operand::write_lane64(amdgpu::Wavefront &wf, uint32_t lane, uint64_t val) c
   if (auto off = Isa::resolved_vgpr_offset(opr_type_, encoding_value_)) {
     uint32_t voff = wf.gpr_idx_en() ? amdgpu::apply_gpr_idx(wf, *off, true) : *off;
     uint32_t idx = wf.vgpr_alloc().base + voff;
+    wf.cu().notify_vgpr_write(&wf, idx, lane, lane + 1);
     wf.cu().write_vgpr(idx, lane, static_cast<uint32_t>(val));
+    wf.cu().notify_vgpr_write(&wf, idx + 1, lane, lane + 1);
     wf.cu().write_vgpr(idx + 1, lane, static_cast<uint32_t>(val >> 32));
     return;
   }

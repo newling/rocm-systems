@@ -7,6 +7,28 @@
 #include <sstream>
 
 namespace rocjitsu::plugins::race_detector {
+namespace {
+
+enum class WaitDomain { Vmcnt, Lgkmcnt };
+
+WaitDomain waitDomain(MemoryEventType type) {
+  switch (type) {
+  case MemoryEventType::GLOBAL_TO_VGPR:
+  case MemoryEventType::VGPR_TO_GLOBAL:
+  case MemoryEventType::GLOBAL_TO_LDS:
+    return WaitDomain::Vmcnt;
+  case MemoryEventType::LDS_TO_VGPR:
+  case MemoryEventType::VGPR_TO_LDS:
+  case MemoryEventType::GLOBAL_TO_SGPR:
+    return WaitDomain::Lgkmcnt;
+  case MemoryEventType::N:
+    break;
+  }
+  assert(false && "unexpected memory event type");
+  return WaitDomain::Lgkmcnt;
+}
+
+} // namespace
 
 RaceDetector::RaceDetector(int nWaves, int vgprCount, int sgprCount, Dim3d workgroupId,
                            std::function<void(RaceViolation)> raceHandler)
@@ -61,7 +83,7 @@ void RaceDetector::retireEvent(EventId eventId) {
   events_.markRetired(eventId);
 }
 
-void RaceDetector::validateRead(int addr, WaveId wave, int lane, int nBytes) const {
+void RaceDetector::validateLdsRead(int addr, WaveId wave, int lane, int nBytes) const {
   bool anyWrites = false;
   int limit = static_cast<int>(byteWriteCounts.size());
   int cStart = addr / kCountGranularity;
@@ -86,7 +108,12 @@ void RaceDetector::validateRead(int addr, WaveId wave, int lane, int nBytes) con
   }
 }
 
-void RaceDetector::validateWrite(int addr, WaveId wave, int lane, int nBytes) const {
+void RaceDetector::validateLdsWrite(int addr, WaveId wave, int lane, int nBytes,
+                                    MemoryEventType incomingType) const {
+  assert(isToLds(incomingType) && "validateLdsWrite expects an LDS-writing event type");
+  // WAR: a write can clobber an LDS byte that an older in-flight read has not
+  // finished consuming. A wave-complete read from this same wave is safe because
+  // the wave's own lgkmcnt wait established program order for that wave.
   bool anyReads = false;
   int limit = static_cast<int>(byteReadCounts.size());
   int cStart = addr / kCountGranularity;
@@ -109,6 +136,11 @@ void RaceDetector::validateWrite(int addr, WaveId wave, int lane, int nBytes) co
     }
   }
 
+  // WAW: a write can conflict with an older in-flight write to the same byte.
+  // Cross-wave writes stay live until s_barrier because only a barrier gives
+  // workgroup-wide ordering. Same-wave writes are instruction-ordered only
+  // within one wait-counter domain. Different domains (vmcnt vs lgkmcnt) can
+  // complete in either order unless the older event has been waited out.
   bool anyWrites = false;
   limit = static_cast<int>(byteWriteCounts.size());
   for (int c = cStart; c < cEnd; ++c) {
@@ -122,7 +154,9 @@ void RaceDetector::validateWrite(int addr, WaveId wave, int lane, int nBytes) co
   }
 
   for (EventId eventId : ldsWriteEvents) {
-    if (wave == events_.waveId(eventId)) {
+    if (wave == events_.waveId(eventId) &&
+        (events_.status(eventId) == EventStatus::WAVE_COMPLETE ||
+         waitDomain(events_.type(eventId)) == waitDomain(incomingType))) {
       continue;
     }
     if (events_.ldsIntervals(eventId).overlapsRange(addr, addr + nBytes)) {

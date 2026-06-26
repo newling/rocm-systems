@@ -280,9 +280,9 @@ void RaceDetectorPlugin::onAmdgpuRouteMemoryInstruction(const Instruction &inst,
       int addr = static_cast<int>(d.per_lane_addr[lane]);
       int nBytes = static_cast<int>(d.elem_size);
       if (d.is_load)
-        detector->validateRead(addr, waveId, static_cast<int>(lane), nBytes);
+        detector->validateLdsRead(addr, waveId, static_cast<int>(lane), nBytes);
       else
-        detector->validateWrite(addr, waveId, static_cast<int>(lane), nBytes);
+        detector->validateLdsWrite(addr, waveId, static_cast<int>(lane), nBytes, type);
     }
     uint32_t laneAddrs[64];
     for (uint32_t lane = 0; lane < wf.wf_size(); ++lane)
@@ -316,6 +316,12 @@ void RaceDetectorPlugin::onAmdgpuRouteMemoryInstruction(const Instruction &inst,
       for (uint32_t lane = 0; lane < wf.wf_size(); ++lane)
         ldsAddrs[lane] =
             d.lds_per_lane_addr ? d.per_lane_lds_addr[lane] : d.lds_base + lane * perLaneBytes;
+      for (uint32_t lane = 0; lane < wf.wf_size(); ++lane) {
+        if (!(d.lane_mask & (1ULL << lane)))
+          continue;
+        detector->validateLdsWrite(static_cast<int>(ldsAddrs[lane]), waveId, static_cast<int>(lane),
+                                   static_cast<int>(perLaneBytes), MemoryEventType::GLOBAL_TO_LDS);
+      }
       rs->registerLdsEvent(wf.pc, MemoryEventType::GLOBAL_TO_LDS, {}, d.lane_mask, wf.wf_size(),
                            std::span<const uint32_t>(ldsAddrs, wf.wf_size()), perLaneBytes);
     } else if (d.is_load && d.dst_reg_base >= wf.vgpr_alloc().base) {
@@ -351,6 +357,16 @@ void RaceDetectorPlugin::onAmdgpuReadVgprs(const amdgpu::Wavefront *wf, uint32_t
   uint32_t logical_reg = physical_reg - wf->vgpr_alloc().base;
   s->race_state->checkVgprRead(static_cast<int>(logical_reg), static_cast<int>(lane_begin),
                                byte_mask);
+}
+
+void RaceDetectorPlugin::onAmdgpuWriteVgprs(const amdgpu::Wavefront *wf, uint32_t physical_reg,
+                                            uint32_t lane_begin, uint32_t lane_end,
+                                            uint8_t byte_mask) {
+  auto *s = get_state(wf);
+  assert(s && s->race_state);
+  uint32_t logical_reg = physical_reg - wf->vgpr_alloc().base;
+  for (uint32_t lane = lane_begin; lane < lane_end; ++lane)
+    s->race_state->checkVgprWrite(static_cast<int>(logical_reg), static_cast<int>(lane), byte_mask);
 }
 
 void RaceDetectorPlugin::onAmdgpuReadSgpr(const amdgpu::Wavefront *wf, uint32_t physical_reg) {

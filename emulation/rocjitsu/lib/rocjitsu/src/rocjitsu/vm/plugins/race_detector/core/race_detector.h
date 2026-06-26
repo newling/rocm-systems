@@ -49,11 +49,15 @@ public:
   void retireEvent(EventId);
 
   /// Check for RAW hazards: no outstanding LDS writes overlap the range.
-  void validateRead(int addr, WaveId, int lane, int nBytes) const;
+  void validateLdsRead(int addr, WaveId, int lane, int nBytes) const;
 
-  /// Check for WAR/WAW hazards: no outstanding LDS reads or cross-wave writes
-  /// overlap the range.
-  void validateWrite(int addr, WaveId, int lane, int nBytes) const;
+  /// Check for WAR/WAW hazards before issuing an LDS write.
+  ///
+  /// The WAW half deliberately treats same-wave writers differently by wait
+  /// counter domain. Same-domain writes are instruction-ordered within a wave.
+  /// Mixed-domain writes (`vmcnt` direct-to-LDS vs `lgkmcnt` ds_write) can
+  /// complete in either order unless the older event has been waited out.
+  void validateLdsWrite(int addr, WaveId, int lane, int nBytes, MemoryEventType incomingType) const;
 
   const EventRegistry &events() const { return events_; }
 

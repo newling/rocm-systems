@@ -58,6 +58,17 @@ void WaveRaceState::registerEventWithIntervals(uint64_t pc, MemoryEventType type
                                                std::vector<uint32_t> regIds, uint64_t execMask,
                                                uint8_t byteMask, IntervalSet ldsIntervals) {
   ProfileScope ps(*profiler_, "registerEvent");
+  // Memory events that write VGPRs are themselves asynchronous writers. Before
+  // adding the new event to the per-register live lists, compare its
+  // destination bytes against older live writers. This catches WAW between two
+  // memory operations without self-conflicting with the event being registered.
+  if (isToVgpr(type)) {
+    for (uint32_t reg : regIds) {
+      forEachActiveLane(execMask, /*waveSize=*/64,
+                        [&](int lane) { checkVgprWrite(static_cast<int>(reg), lane, byteMask); });
+    }
+  }
+
   bool toSgpr = isToSgpr(type);
   if (!toSgpr) {
     for (auto reg : regIds) {
@@ -178,6 +189,21 @@ void WaveRaceState::checkVgprRead(int reg, int lane, uint8_t byteMask) const {
         detector->events().isActiveForLane(eid, lane)) {
       detector->getRaceHandler()(
           {RaceViolation::Space::VGPR, reg, waveId.value, lane, false, detector->getWorkgroupId()});
+    }
+  }
+}
+
+void WaveRaceState::checkVgprWrite(int reg, int lane, uint8_t byteMask) const {
+  // VGPR WAW uses the same live-event lists as VGPR RAW. A pending
+  // GLOBAL_TO_VGPR or LDS_TO_VGPR event represents a future write to the
+  // register. Any later write to an overlapping byte/lane is ambiguous because
+  // the pending memory event may complete after the later writer.
+  for (EventId eid : vgprMemoryEvents[reg]) {
+    if (isToVgpr(detector->events().type(eid)) &&
+        (detector->events().byteMask(eid) & byteMask) != 0 &&
+        detector->events().isActiveForLane(eid, lane)) {
+      detector->getRaceHandler()(
+          {RaceViolation::Space::VGPR, reg, waveId.value, lane, true, detector->getWorkgroupId()});
     }
   }
 }

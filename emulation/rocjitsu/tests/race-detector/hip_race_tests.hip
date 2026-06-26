@@ -537,6 +537,53 @@ TEST_F(RaceTest, global_to_lds_buffer_race) {
   EXPECT_NE(t.mark1.find("ds_read_b32"), npos) << "mark1: " << t.mark1;
 }
 
+// --- LDS WAW: direct-to-LDS then ds_write ---
+//
+// This is a same-wave WAW case where the first writer is asynchronous and
+// vmcnt-tracked. Ordinary same-wave ds_write-vs-ds_write is ordered, but a
+// pending direct-to-LDS write can complete after the later ds_write unless
+// s_waitcnt vmcnt(0) appears first.
+
+__attribute__((amdgpu_flat_work_group_size(64, 64)))
+__global__ void waw_global_to_lds_then_ds_write_kernel(const int *src, int *out) {
+  __shared__ int lds[64];
+  int tid = threadIdx.x;
+  int byte_offset = tid * static_cast<int>(sizeof(int));
+  int val = tid + 100;
+
+  uintptr_t base = reinterpret_cast<uintptr_t>(src);
+  unsigned w0 = static_cast<unsigned>(base);
+  unsigned w1 = static_cast<unsigned>(base >> 32) & 0xFFFFu;
+  unsigned w2 = 64 * sizeof(int);
+  unsigned w3 = (4u) | (7u << 12) | (4u << 15);
+
+  asm volatile(
+      "s_mov_b32 s12, %0\n"
+      "s_mov_b32 s13, %1\n"
+      "s_mov_b32 s14, %2\n"
+      "s_mov_b32 s15, %3\n"
+      "s_mov_b32 m0, 0\n"
+      "buffer_load_dword %4, s[12:15], 0 offen lds\n"
+      // BUG: no s_waitcnt vmcnt(0) before ds_write to the same LDS byte.
+      "ds_write_b32 %4, %5\n"
+      "s_waitcnt vmcnt(0) lgkmcnt(0)\n"
+      :
+      : "s"(w0), "s"(w1), "s"(w2), "s"(w3), "v"(byte_offset), "v"(val)
+      : "s12", "s13", "s14", "s15", "memory"
+  );
+
+  __syncthreads();
+  out[tid] = lds[tid];
+}
+
+TEST_F(RaceTest, waw_global_to_lds_then_ds_write) {
+  waw_global_to_lds_then_ds_write_kernel<<<1, 64>>>(alloc<int>(64), alloc<int>(64));
+  sync();
+  auto r = records();
+  ASSERT_GE(r.size(), 1u);
+  EXPECT_EQ(r[0].type, "LDS");
+}
+
 // --- Partial vmcnt ---
 
 __global__ void partial_vmcnt_kernel(const float *src_a, const float *src_b,
@@ -1167,39 +1214,114 @@ TEST_F(RaceTest, scratch_vmcnt_race) {
 // conservative. A more precise (but much harder) approach would track
 // whether tainted values reach observable side effects.
 
-// --- WAW: global load then ALU write to same register ---
+// --- VGPR WAW tests ---
 //
-// TODO(newling): the detector does not currently flag this. A global load targets
-// a VGPR, then an ALU instruction overwrites the same VGPR before
-// s_waitcnt retires the load. The final register value is ambiguous —
-// if the load completes after the ALU write, it silently clobbers the
-// ALU result. This is a WAW (write-after-write) race that should be
-// detected but isn't, because the detector only checks reads against
-// pending loads (checkVgprRead), not ALU writes.
+// These cases isolate write-after-write hazards: a pending async VGPR writer
+// may complete after a later write to the same VGPR. The ALU-write cases use a
+// different source operand from the destination so the reported race is not a
+// read-after-write hazard on the pending load result.
 
 __global__ void waw_global_load_then_alu_kernel(const float *src, float *dst) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   float val;
+  float tmp = static_cast<float>(tid);
   asm volatile(
       "global_load_dword %0, %1, off\n"
       // BUG: no s_waitcnt before ALU write to the same register.
-      "v_add_f32 %0, %0, %0\n"
-      : "=v"(val) : "v"(&src[tid])
+      "v_add_f32 %0, %2, %2\n"
+      : "=v"(val) : "v"(&src[tid]), "v"(tmp)
   );
   asm volatile("s_waitcnt vmcnt(0)\n" ::: "memory");
   dst[tid] = val;
+}
+
+__global__ void waw_lds_read_then_alu_kernel(int *out) {
+  __shared__ int lds[64];
+  int tid = threadIdx.x;
+  lds[tid] = tid;
+  __syncthreads();
+
+  int val;
+  int tmp = tid + 1;
+  asm volatile(
+      "ds_read_b32 %0, %1\n"
+      // BUG: no s_waitcnt before ALU write to the same register.
+      "v_add_u32_e32 %0, 1, %2\n"
+      : "=v"(val) : "v"(tid * static_cast<int>(sizeof(int))), "v"(tmp)
+  );
+  asm volatile("s_waitcnt lgkmcnt(0)\n" ::: "memory");
+  out[tid] = val;
+}
+
+__global__ void waw_global_load_then_lds_read_kernel(const int *src, int *out) {
+  __shared__ int lds[64];
+  int tid = threadIdx.x;
+  lds[tid] = tid + 100;
+  __syncthreads();
+
+  int val;
+  asm volatile(
+      "global_load_dword %0, %2, off\n"
+      // BUG: no s_waitcnt vmcnt(0) before LDS load writes the same register.
+      "ds_read_b32 %0, %1\n"
+      : "=v"(val)
+      : "v"(tid * static_cast<int>(sizeof(int))), "v"(&src[tid])
+  );
+  asm volatile("s_waitcnt vmcnt(0) lgkmcnt(0)\n" ::: "memory");
+  out[tid] = val;
+}
+
+__global__ void waw_lds_read_then_global_load_kernel(const int *src, int *out) {
+  __shared__ int lds[64];
+  int tid = threadIdx.x;
+  lds[tid] = tid + 100;
+  __syncthreads();
+
+  int val;
+  asm volatile(
+      "ds_read_b32 %0, %1\n"
+      // BUG: no s_waitcnt lgkmcnt(0) before global load writes the same register.
+      "global_load_dword %0, %2, off\n"
+      : "=v"(val)
+      : "v"(tid * static_cast<int>(sizeof(int))), "v"(&src[tid])
+  );
+  asm volatile("s_waitcnt vmcnt(0) lgkmcnt(0)\n" ::: "memory");
+  out[tid] = val;
 }
 
 TEST_F(RaceTest, waw_global_load_then_alu) {
   auto *src = allocWithData<float>(64), *dst = alloc<float>(64);
   waw_global_load_then_alu_kernel<<<1, 64>>>(src, dst);
   sync();
-  // TODO(newling): this should detect a VGPR WAW race, but currently
-  // doesn't. When WAW detection is implemented, change to:
-  //   auto r = records();
-  //   ASSERT_GE(r.size(), 1u);
-  //   EXPECT_NE(r[0].type.find("VGPR"), npos);
-  ExpectNoRace();
+  auto r = records();
+  ASSERT_GE(r.size(), 1u);
+  EXPECT_EQ(r[0].type, "VGPR");
+}
+
+TEST_F(RaceTest, waw_lds_read_then_alu) {
+  waw_lds_read_then_alu_kernel<<<1, 64>>>(alloc<int>(64));
+  sync();
+  auto r = records();
+  ASSERT_GE(r.size(), 1u);
+  EXPECT_EQ(r[0].type, "VGPR");
+}
+
+TEST_F(RaceTest, waw_global_load_then_lds_read) {
+  auto *src = allocWithData<int>(64), *out = alloc<int>(64);
+  waw_global_load_then_lds_read_kernel<<<1, 64>>>(src, out);
+  sync();
+  auto r = records();
+  ASSERT_GE(r.size(), 1u);
+  EXPECT_EQ(r[0].type, "VGPR");
+}
+
+TEST_F(RaceTest, waw_lds_read_then_global_load) {
+  auto *src = allocWithData<int>(64), *out = alloc<int>(64);
+  waw_lds_read_then_global_load_kernel<<<1, 64>>>(src, out);
+  sync();
+  auto r = records();
+  ASSERT_GE(r.size(), 1u);
+  EXPECT_EQ(r[0].type, "VGPR");
 }
 
 // --- f64 VGPR race (64-bit global load + use without waitcnt) ---

@@ -50,6 +50,10 @@ public:
       exec = defaultExec_;
     }
     ldsAddrs.resize(waveSize_, 0);
+    forEachActiveLane(exec, waveSize_, [&](int lane) {
+      detector_->validateLdsWrite(static_cast<int>(ldsAddrs[lane]), WaveId{wave}, lane,
+                                  bytesPerLane, MemoryEventType::GLOBAL_TO_LDS);
+    });
     waves_[wave]->registerLdsEvent(pc_++, MemoryEventType::GLOBAL_TO_LDS,
                                    /*registers=*/{}, exec, waveSize_, ldsAddrs, bytesPerLane);
   }
@@ -79,7 +83,7 @@ public:
     if (!exec) {
       exec = defaultExec_;
     }
-    detector_->validateWrite(addr, WaveId{wave}, lane, bytes);
+    detector_->validateLdsWrite(addr, WaveId{wave}, lane, bytes, MemoryEventType::VGPR_TO_LDS);
     std::vector<uint32_t> ldsAddrs(waveSize_, 0);
     ldsAddrs[lane] = addr;
     uint64_t laneMask = 1ULL << lane;
@@ -97,7 +101,8 @@ public:
     }
     ldsAddrs.resize(waveSize_, 0);
     forEachActiveLane(exec, waveSize_, [&](int lane) {
-      detector_->validateWrite(static_cast<int>(ldsAddrs[lane]), WaveId{wave}, lane, bytesPerLane);
+      detector_->validateLdsWrite(static_cast<int>(ldsAddrs[lane]), WaveId{wave}, lane,
+                                  bytesPerLane, MemoryEventType::VGPR_TO_LDS);
     });
     waves_[wave]->registerLdsEvent(pc_++, MemoryEventType::VGPR_TO_LDS,
                                    /*registers=*/{}, exec, waveSize_, ldsAddrs, bytesPerLane);
@@ -111,7 +116,7 @@ public:
     if (!exec) {
       exec = defaultExec_;
     }
-    detector_->validateRead(addr, WaveId{wave}, lane, bytes);
+    detector_->validateLdsRead(addr, WaveId{wave}, lane, bytes);
     std::vector<uint32_t> ldsAddrs(waveSize_, 0);
     ldsAddrs[lane] = addr;
     uint64_t laneMask = 1ULL << lane;
@@ -146,14 +151,18 @@ public:
     waves_[wave]->checkVgprRead(reg, lane, byteMask);
   }
 
+  void checkVgprWrite(int wave, int reg, int lane, uint8_t byteMask = 0xF) {
+    waves_[wave]->checkVgprWrite(reg, lane, byteMask);
+  }
+
   void checkSgprRead(int wave, int reg) { waves_[wave]->checkSgprRead(reg); }
 
   void checkLdsRead(int wave, int lane, int addr, int bytes) {
-    detector_->validateRead(addr, WaveId{wave}, lane, bytes);
+    detector_->validateLdsRead(addr, WaveId{wave}, lane, bytes);
   }
 
   void checkLdsWrite(int wave, int lane, int addr, int bytes) {
-    detector_->validateWrite(addr, WaveId{wave}, lane, bytes);
+    detector_->validateLdsWrite(addr, WaveId{wave}, lane, bytes, MemoryEventType::VGPR_TO_LDS);
   }
 
   // -- Results --

@@ -126,8 +126,9 @@ races. Some examples:
 
 ## What this plugin detects
 
-- **VGPR races**: a vector register is read before a pending global or LDS load
-  has completed (`s_waitcnt vmcnt` / `s_waitcnt lgkmcnt` insufficient).
+- **VGPR races**: a vector register is read or overwritten before a pending
+  global or LDS load has completed (`s_waitcnt vmcnt` / `s_waitcnt lgkmcnt`
+  insufficient).
 - **SGPR races**: a scalar register is read before a pending scalar load has
   completed (`s_waitcnt lgkmcnt` insufficient).
 - **LDS races**: an LDS byte is read or written by one wave while another wave
@@ -155,9 +156,8 @@ The plugin keeps track, for all registers and LDS memory bytes, of which memory
 operations are in flight. When an instruction in the emulator accesses an LDS
 byte, there is a check to see what memory events are still in flight that
 read/write that byte, from the perspective of the accessing thread. In this way,
-RAW (read-after-write), WAR (write-after-read), and cross-wave WAW
-(write-after-write) hazards can be detected. Similar logic applies for VGPR
-and SGPR accesses.
+RAW (read-after-write), WAR (write-after-read), and WAW (write-after-write)
+hazards can be detected. Similar logic applies for VGPR and SGPR accesses.
 
 **LDS race detection** uses coarse-grained counters (one per 16-byte chunk) for
 fast-path checks, with interval-based overlap scanning as a fallback. Live
@@ -268,10 +268,11 @@ ctest --test-dir build -R "RaceTest"
   (missing `s_waitcnt` and `s_barrier`). It does not detect inter-workgroup
   races, races between dispatches, or host-device synchronization issues.
 
-- **Limited WAW detection**: cross-wave LDS write-after-write hazards are
-  flagged, but VGPR WAW is not currently detected. For example, an ALU
-  instruction can overwrite a register that has a pending global load without
-  being reported.
+- **Limited WAW detection**: VGPR WAW hazards are flagged when one writer is an
+  outstanding asynchronous memory operation. LDS WAW hazards are flagged for
+  cross-wave writes and for same-wave direct-to-LDS writes that have not been
+  drained with `s_waitcnt vmcnt(0)`. Same-instruction, same-wave lane collisions
+  are not currently reported.
 
 - **Kernel name resolution**: kernel names in race reports may show as `"?"` if
   symbol information is not available in the code object.

@@ -69,6 +69,14 @@ public:
   /// Check a full VGPR read for races. Calls the RaceHandler on violation.
   void checkVgprRead(int reg, int lane, uint8_t byteMask) const;
 
+  /// Check a VGPR write for WAW races against pending async writes.
+  ///
+  /// This is used for ordinary instruction destination writes and also before
+  /// registering a new async VGPR-producing memory event. That second use
+  /// catches memory-vs-memory WAW, e.g. `global_load v0` followed by
+  /// `ds_read v0` without first waiting for vmcnt.
+  void checkVgprWrite(int reg, int lane, uint8_t byteMask) const;
+
   /// Check all lanes of a VGPR for races (used by bulk register reads).
   void checkVgprReadAllLanes(int reg) const;
 

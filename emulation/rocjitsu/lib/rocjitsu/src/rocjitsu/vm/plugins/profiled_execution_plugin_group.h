@@ -128,6 +128,14 @@ public:
     });
   }
 
+  void onAmdgpuWriteVgprs(const amdgpu::Wavefront *wf, uint32_t physical_reg, uint32_t lane_begin,
+                          uint32_t lane_end,
+                          uint8_t byte_mask = ExecutionPlugin::kFullByteMask) override {
+    profiled_dispatch(prof_write_vgpr_, [&]() {
+      ExecutionPluginGroup::onAmdgpuWriteVgprs(wf, physical_reg, lane_begin, lane_end, byte_mask);
+    });
+  }
+
   void onAmdgpuReadSgpr(const amdgpu::Wavefront *wf, uint32_t physical_reg) override {
     profiled_dispatch(prof_read_sgpr_,
                       [&]() { ExecutionPluginGroup::onAmdgpuReadSgpr(wf, physical_reg); });
@@ -158,6 +166,7 @@ private:
     prof_before_exec_ = {};
     prof_after_exec_ = {};
     prof_read_vgpr_ = {};
+    prof_write_vgpr_ = {};
     prof_read_sgpr_ = {};
     prof_route_mem_ = {};
     prof_barrier_ = {};
@@ -179,6 +188,7 @@ private:
     print_hook("beforeExecuteInstruction", prof_before_exec_);
     print_hook("afterExecuteInstruction", prof_after_exec_);
     print_hook("readVgpr", prof_read_vgpr_);
+    print_hook("writeVgpr", prof_write_vgpr_);
     print_hook("readSgpr", prof_read_sgpr_);
     print_hook("routeMemoryInstruction", prof_route_mem_);
     print_hook("barrierResolved", prof_barrier_);
@@ -199,6 +209,7 @@ private:
   HookProfile prof_before_exec_;
   HookProfile prof_after_exec_;
   HookProfile prof_read_vgpr_;
+  HookProfile prof_write_vgpr_;
   HookProfile prof_read_sgpr_;
   HookProfile prof_route_mem_;
   HookProfile prof_barrier_;
