@@ -308,6 +308,59 @@ TEST_F(RaceTest, sgpr_waitcnt_race) {
   EXPECT_NE(t.mark1.find("s_add_u32"), npos) << "mark1: " << t.mark1;
 }
 
+// --- SGPR write-after-write ---
+
+__global__ void sgpr_waw_load_then_mov_kernel(const int *src, int *dst) {
+  int val;
+  asm volatile(
+      "s_load_dword %0, %1, 0x0\n"
+      // BUG: no s_waitcnt before a scalar ALU write to the same SGPR.
+      "s_mov_b32 %0, 7\n"
+      : "=&s"(val) : "s"(src)
+  );
+  asm volatile("s_waitcnt lgkmcnt(0)\n" ::: "memory");
+  dst[threadIdx.x] = val;
+}
+
+__global__ void sgpr_waw_load_then_load_kernel(const int *src0,
+                                               const int *src1,
+                                               int *dst) {
+  int val;
+  asm volatile(
+      "s_load_dword %0, %1, 0x0\n"
+      // BUG: no s_waitcnt before another scalar load writes the same SGPR.
+      "s_load_dword %0, %2, 0x0\n"
+      : "=&s"(val) : "s"(src0), "s"(src1)
+  );
+  asm volatile("s_waitcnt lgkmcnt(0)\n" ::: "memory");
+  dst[threadIdx.x] = val;
+}
+
+TEST_F(RaceTest, sgpr_waw_load_then_mov) {
+  auto *src = allocWithData<int>(64), *dst = alloc<int>(64);
+  sgpr_waw_load_then_mov_kernel<<<1, 64>>>(src, dst);
+  sync();
+  auto r = records();
+  ASSERT_GE(r.size(), 1u);
+  EXPECT_EQ(r[0].type, "SGPR");
+  auto t = parseTrace(r[0]);
+  EXPECT_NE(t.mark0.find("s_load_dword"), npos) << "mark0: " << t.mark0;
+  EXPECT_NE(t.mark1.find("s_mov_b32"), npos) << "mark1: " << t.mark1;
+}
+
+TEST_F(RaceTest, sgpr_waw_load_then_load) {
+  auto *src0 = allocWithData<int>(64), *src1 = allocWithData<int>(64);
+  auto *dst = alloc<int>(64);
+  sgpr_waw_load_then_load_kernel<<<1, 64>>>(src0, src1, dst);
+  sync();
+  auto r = records();
+  ASSERT_GE(r.size(), 1u);
+  EXPECT_EQ(r[0].type, "SGPR");
+  auto t = parseTrace(r[0]);
+  EXPECT_NE(t.mark0.find("s_load_dword"), npos) << "mark0: " << t.mark0;
+  EXPECT_NE(t.mark1.find("s_load_dword"), npos) << "mark1: " << t.mark1;
+}
+
 // --- LDS cross-wave ---
 
 __attribute__((amdgpu_flat_work_group_size(128, 128)))

@@ -131,6 +131,13 @@ public:
   /// @param physical_reg Physical register index in the SGPR file.
   virtual void onAmdgpuReadSgpr(const amdgpu::Wavefront * /*wf*/, uint32_t /*physical_reg*/) {}
 
+  /// Called when an SGPR is written during instruction execution.
+  /// Memory pipeline completions write raw SGPR storage and do not fire this
+  /// hook; this is for instruction-level destination writes.
+  /// @param wf Owning wavefront, or nullptr if the register is unallocated.
+  /// @param physical_reg Physical register index in the SGPR file.
+  virtual void onAmdgpuWriteSgpr(const amdgpu::Wavefront * /*wf*/, uint32_t /*physical_reg*/) {}
+
   /// Called when all waves in a workgroup have reached s_barrier.
   virtual void onAmdgpuBarrierResolved(std::span<amdgpu::Wavefront *> /*wavefronts*/) {}
 

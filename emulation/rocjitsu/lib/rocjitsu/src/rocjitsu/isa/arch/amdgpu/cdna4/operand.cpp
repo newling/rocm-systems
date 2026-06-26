@@ -1495,7 +1495,9 @@ void resolve_dst_write(amdgpu::Wavefront &wf, int ev, uint32_t val) {
     return;
   }
   if (ev <= 105) {
-    wf.cu().write_sgpr(wf.sgpr_alloc().base + static_cast<uint32_t>(ev), val);
+    uint32_t idx = wf.sgpr_alloc().base + static_cast<uint32_t>(ev);
+    wf.cu().notify_sgpr_write(&wf, idx);
+    wf.cu().write_sgpr(idx, val);
     return;
   }
   if (ev == 106) {
@@ -1507,7 +1509,9 @@ void resolve_dst_write(amdgpu::Wavefront &wf, int ev, uint32_t val) {
     return;
   }
   if (ev >= 108 && ev <= 123) {
-    wf.cu().write_sgpr(wf.sgpr_alloc().base + static_cast<uint32_t>(ev), val);
+    uint32_t idx = wf.sgpr_alloc().base + static_cast<uint32_t>(ev);
+    wf.cu().notify_sgpr_write(&wf, idx);
+    wf.cu().write_sgpr(idx, val);
     return;
   }
   if (ev == 124) {
@@ -1531,10 +1535,11 @@ void resolve_dst_write64(amdgpu::Wavefront &wf, int ev, uint64_t val) {
     return;
   }
   if (ev <= 105) {
-    wf.cu().write_sgpr(wf.sgpr_alloc().base + static_cast<uint32_t>(ev),
-                       static_cast<uint32_t>(val));
-    wf.cu().write_sgpr(wf.sgpr_alloc().base + static_cast<uint32_t>(ev + 1),
-                       static_cast<uint32_t>(val >> 32));
+    uint32_t idx = wf.sgpr_alloc().base + static_cast<uint32_t>(ev);
+    wf.cu().notify_sgpr_write(&wf, idx);
+    wf.cu().write_sgpr(idx, static_cast<uint32_t>(val));
+    wf.cu().notify_sgpr_write(&wf, idx + 1);
+    wf.cu().write_sgpr(idx + 1, static_cast<uint32_t>(val >> 32));
     return;
   }
   if (ev == 106) {
@@ -1542,10 +1547,11 @@ void resolve_dst_write64(amdgpu::Wavefront &wf, int ev, uint64_t val) {
     return;
   }
   if (ev >= 108 && ev <= 122) {
-    wf.cu().write_sgpr(wf.sgpr_alloc().base + static_cast<uint32_t>(ev),
-                       static_cast<uint32_t>(val));
-    wf.cu().write_sgpr(wf.sgpr_alloc().base + static_cast<uint32_t>(ev + 1),
-                       static_cast<uint32_t>(val >> 32));
+    uint32_t idx = wf.sgpr_alloc().base + static_cast<uint32_t>(ev);
+    wf.cu().notify_sgpr_write(&wf, idx);
+    wf.cu().write_sgpr(idx, static_cast<uint32_t>(val));
+    wf.cu().notify_sgpr_write(&wf, idx + 1);
+    wf.cu().write_sgpr(idx + 1, static_cast<uint32_t>(val >> 32));
     return;
   }
   if (ev == 124)

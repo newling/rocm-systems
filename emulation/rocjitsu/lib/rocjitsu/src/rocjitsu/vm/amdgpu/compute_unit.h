@@ -387,6 +387,11 @@ public:
       plugin_group_->onAmdgpuWriteVgprs(wf, reg_idx, lane_begin, lane_end, byte_mask);
   }
 
+  void notify_sgpr_write(const Wavefront *wf, uint32_t reg_idx) const {
+    if (wf)
+      plugin_group_->onAmdgpuWriteSgpr(wf, reg_idx);
+  }
+
   /// @brief Read a vector register lane from the physical VGPR file.
   /// @param reg_idx Physical register index.
   /// @param lane Lane index within the wavefront.

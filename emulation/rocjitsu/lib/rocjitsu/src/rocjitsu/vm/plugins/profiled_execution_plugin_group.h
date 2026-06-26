@@ -141,6 +141,11 @@ public:
                       [&]() { ExecutionPluginGroup::onAmdgpuReadSgpr(wf, physical_reg); });
   }
 
+  void onAmdgpuWriteSgpr(const amdgpu::Wavefront *wf, uint32_t physical_reg) override {
+    profiled_dispatch(prof_write_sgpr_,
+                      [&]() { ExecutionPluginGroup::onAmdgpuWriteSgpr(wf, physical_reg); });
+  }
+
   void onAmdgpuBarrierResolved(std::span<amdgpu::Wavefront *> wavefronts) override {
     profiled_dispatch(prof_barrier_,
                       [&]() { ExecutionPluginGroup::onAmdgpuBarrierResolved(wavefronts); });
@@ -168,6 +173,7 @@ private:
     prof_read_vgpr_ = {};
     prof_write_vgpr_ = {};
     prof_read_sgpr_ = {};
+    prof_write_sgpr_ = {};
     prof_route_mem_ = {};
     prof_barrier_ = {};
     prof_wg_dispatched_ = {};
@@ -190,6 +196,7 @@ private:
     print_hook("readVgpr", prof_read_vgpr_);
     print_hook("writeVgpr", prof_write_vgpr_);
     print_hook("readSgpr", prof_read_sgpr_);
+    print_hook("writeSgpr", prof_write_sgpr_);
     print_hook("routeMemoryInstruction", prof_route_mem_);
     print_hook("barrierResolved", prof_barrier_);
     print_hook("workgroupDispatched", prof_wg_dispatched_);
@@ -211,6 +218,7 @@ private:
   HookProfile prof_read_vgpr_;
   HookProfile prof_write_vgpr_;
   HookProfile prof_read_sgpr_;
+  HookProfile prof_write_sgpr_;
   HookProfile prof_route_mem_;
   HookProfile prof_barrier_;
   HookProfile prof_wg_dispatched_;

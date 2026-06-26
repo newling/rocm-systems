@@ -124,6 +124,7 @@ public:
                           uint32_t lane_end, uint8_t byte_mask = 0xF) override;
 
   void onAmdgpuReadSgpr(const amdgpu::Wavefront *wf, uint32_t physical_reg) override;
+  void onAmdgpuWriteSgpr(const amdgpu::Wavefront *wf, uint32_t physical_reg) override;
 
   void onAmdgpuBeforeExecuteInstruction(uint64_t pc, const Instruction &inst,
                                         amdgpu::Wavefront &wf) override;

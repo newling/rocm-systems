@@ -376,6 +376,13 @@ void RaceDetectorPlugin::onAmdgpuReadSgpr(const amdgpu::Wavefront *wf, uint32_t 
   s->race_state->checkSgprRead(static_cast<int>(logical_reg));
 }
 
+void RaceDetectorPlugin::onAmdgpuWriteSgpr(const amdgpu::Wavefront *wf, uint32_t physical_reg) {
+  auto *s = get_state(wf);
+  assert(s && s->race_state);
+  uint32_t logical_reg = physical_reg - wf->sgpr_alloc().base;
+  s->race_state->checkSgprWrite(static_cast<int>(logical_reg));
+}
+
 void RaceDetectorPlugin::onAmdgpuBeforeExecuteInstruction(uint64_t pc, const Instruction &inst,
                                                           amdgpu::Wavefront &wf) {
   auto *s = get_state(wf);

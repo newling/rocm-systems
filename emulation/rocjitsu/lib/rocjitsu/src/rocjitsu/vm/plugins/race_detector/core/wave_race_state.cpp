@@ -70,6 +70,11 @@ void WaveRaceState::registerEventWithIntervals(uint64_t pc, MemoryEventType type
   }
 
   bool toSgpr = isToSgpr(type);
+  if (toSgpr) {
+    for (uint32_t reg : regIds) {
+      checkSgprWrite(static_cast<int>(reg));
+    }
+  }
   if (!toSgpr) {
     for (auto reg : regIds) {
       regEventCountInc(type, reg);
@@ -168,10 +173,35 @@ void WaveRaceState::sWaitCntVmcnt(int vmcnt) {
 }
 
 void WaveRaceState::sWaitCntLgkmcnt(int lgkmcnt) {
+  // MI300/CDNA3 ISA Reference Guide, section 4.4 "Data Dependency Resolution":
+  // LGKM_CNT covers LDS/GWS/scalar-memory/message work, but the counter is not
+  // one ordering domain. Operations of different LGKM types can return
+  // out-of-order. Operations of the same type return in issue order except
+  // scalar-memory reads, which can also return out-of-order; for scalar-memory
+  // reads, the ISA says only S_WAITCNT 0 is legitimate.
+  //
+  // Consequence for this detector:
+  // - If any scalar-memory read is pending, partial lgkmcnt waits do not retire
+  //   any LGKM events. The counter may have drained scalar-memory dwords or LDS
+  //   work, but the detector does not try to prove which type completed.
+  // - If no scalar-memory reads are pending, partial lgkmcnt waits may retire
+  //   ordered LDS events.
+  // - lgkmcnt(0) retires all remaining LGKM events, including scalar loads.
+  bool has_pending_sgpr_load = false;
+  for (int count : sgprEventCount) {
+    if (count != 0) {
+      has_pending_sgpr_load = true;
+      break;
+    }
+  }
+  if (lgkmcnt != 0 && has_pending_sgpr_load)
+    return;
+
   resolveWaitCnt(lgkmcnt, [](MemoryEventType type) {
-    return type == MemoryEventType::LDS_TO_VGPR || type == MemoryEventType::VGPR_TO_LDS ||
-           type == MemoryEventType::GLOBAL_TO_SGPR;
+    return type == MemoryEventType::LDS_TO_VGPR || type == MemoryEventType::VGPR_TO_LDS;
   });
+  if (lgkmcnt == 0)
+    resolveWaitCnt(0, [](MemoryEventType type) { return type == MemoryEventType::GLOBAL_TO_SGPR; });
 }
 
 void WaveRaceState::flushWaveCompleteMemoryEvents() {
@@ -241,6 +271,18 @@ void WaveRaceState::checkSgprRead(int reg) const {
     if (isToSgpr(detector->events().type(eid))) {
       detector->getRaceHandler()(
           {RaceViolation::Space::SGPR, reg, waveId.value, -1, false, detector->getWorkgroupId()});
+    }
+  }
+}
+
+void WaveRaceState::checkSgprWrite(int reg) const {
+  if (sgprEventCount[reg] == 0) {
+    return;
+  }
+  for (EventId eid : sgprMemoryEvents[reg]) {
+    if (isToSgpr(detector->events().type(eid))) {
+      detector->getRaceHandler()(
+          {RaceViolation::Space::SGPR, reg, waveId.value, -1, true, detector->getWorkgroupId()});
     }
   }
 }

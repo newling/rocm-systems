@@ -156,6 +156,7 @@ public:
   }
 
   void checkSgprRead(int wave, int reg) { waves_[wave]->checkSgprRead(reg); }
+  void checkSgprWrite(int wave, int reg) { waves_[wave]->checkSgprWrite(reg); }
 
   void checkLdsRead(int wave, int lane, int addr, int bytes) {
     detector_->validateLdsRead(addr, WaveId{wave}, lane, bytes);

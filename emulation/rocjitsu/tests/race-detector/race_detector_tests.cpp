@@ -76,14 +76,82 @@ TEST(RaceDetector, Sgpr_WithWaitcnt) {
 }
 
 TEST(RaceDetector, Sgpr_PartialWaitcnt) {
+  // MI300/CDNA3 ISA section 4.4 says scalar-memory reads can return out of
+  // order and only S_WAITCNT 0 is legitimate for them. Therefore lgkmcnt(1)
+  // does not prove either scalar load completed, even though one LGKM slot has
+  // drained.
   RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/8, /*sgprs=*/8);
   b.scalarLoad(/*wave=*/0, /*sgprBase=*/4, /*numRegs=*/1); // oldest
   b.scalarLoad(/*wave=*/0, /*sgprBase=*/5, /*numRegs=*/1); // newest
-  b.waitcnt(/*wave=*/0, /*vmcnt=*/-1, /*lgkmcnt=*/1);      // drain oldest (s4)
-  b.checkSgprRead(/*wave=*/0, /*reg=*/4);                  // safe
-  EXPECT_FALSE(b.hasSgprRace(4));
+  b.waitcnt(/*wave=*/0, /*vmcnt=*/-1, /*lgkmcnt=*/1);
+  b.checkSgprRead(/*wave=*/0, /*reg=*/4); // still potentially in flight
+  EXPECT_TRUE(b.hasSgprRace(4));
+  b.clearViolations();
   b.checkSgprRead(/*wave=*/0, /*reg=*/5); // RACE
   EXPECT_TRUE(b.hasSgprRace(5));
+}
+
+TEST(RaceDetector, SgprWaw_ScalarLoadThenScalarLoad) {
+  // A pending scalar load may complete after a later scalar load to the same
+  // SGPR and clobber it.
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/8, /*sgprs=*/8);
+  b.scalarLoad(/*wave=*/0, /*sgprBase=*/4, /*numRegs=*/1);
+  b.scalarLoad(/*wave=*/0, /*sgprBase=*/4, /*numRegs=*/1);
+  EXPECT_TRUE(b.hasSgprRace(4));
+}
+
+TEST(RaceDetector, SgprWaw_ScalarLoadThenAluWrite) {
+  // A pending scalar load may complete after a later instruction writes the
+  // same SGPR.
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/8, /*sgprs=*/8);
+  b.scalarLoad(/*wave=*/0, /*sgprBase=*/4, /*numRegs=*/1);
+  b.checkSgprWrite(/*wave=*/0, /*reg=*/4);
+  EXPECT_TRUE(b.hasSgprRace(4));
+}
+
+TEST(RaceDetector, SgprWaw_ScalarLoadThenScalarLoadWithWaitcnt) {
+  // Waiting out the first scalar load before issuing the second one makes the
+  // destination overwrite ordered.
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/8, /*sgprs=*/8);
+  b.scalarLoad(/*wave=*/0, /*sgprBase=*/4, /*numRegs=*/1);
+  b.waitcnt(/*wave=*/0, /*vmcnt=*/-1, /*lgkmcnt=*/0);
+  b.scalarLoad(/*wave=*/0, /*sgprBase=*/4, /*numRegs=*/1);
+  EXPECT_FALSE(b.hasRace());
+}
+
+TEST(RaceDetector, SgprAndLds_PartialLgkmcntDoesNotIdentifyCompletedType) {
+  // MI300/CDNA3 ISA section 4.4: different LGKM types can return out of order.
+  // With one scalar load and one DS read pending, lgkmcnt(1) proves only that
+  // one LGKM slot drained; it does not prove whether the scalar load or DS read
+  // completed.
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/8, /*sgprs=*/8);
+  b.scalarLoad(/*wave=*/0, /*sgprBase=*/4, /*numRegs=*/1);
+  b.ldsRead(/*wave=*/0, /*lane=*/0, /*addr=*/0, /*bytes=*/4, /*vgprDst=*/2);
+  b.waitcnt(/*wave=*/0, /*vmcnt=*/-1, /*lgkmcnt=*/1);
+  b.checkSgprRead(/*wave=*/0, /*reg=*/4);
+  EXPECT_TRUE(b.hasSgprRace(4));
+  b.checkVgprRead(/*wave=*/0, /*reg=*/2, /*lane=*/0);
+  EXPECT_TRUE(b.hasVgprRace(2));
+}
+
+TEST(RaceDetector, SgprAndLds_PartialLgkmcntDoesNotRetireDsWithPendingScalarLoad) {
+  // Three LGKM slots are pending: one scalar load plus two ordered DS reads.
+  // The detector deliberately does not try to prove which LGKM type completed
+  // while scalar-memory reads are pending. It keeps both DS reads and the
+  // scalar load live until lgkmcnt(0).
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/8, /*sgprs=*/8);
+  b.scalarLoad(/*wave=*/0, /*sgprBase=*/4, /*numRegs=*/1);
+  b.ldsRead(/*wave=*/0, /*lane=*/0, /*addr=*/0, /*bytes=*/4, /*vgprDst=*/2);
+  b.ldsRead(/*wave=*/0, /*lane=*/0, /*addr=*/4, /*bytes=*/4, /*vgprDst=*/3);
+  b.waitcnt(/*wave=*/0, /*vmcnt=*/-1, /*lgkmcnt=*/1);
+  b.checkVgprRead(/*wave=*/0, /*reg=*/2, /*lane=*/0);
+  EXPECT_TRUE(b.hasVgprRace(2));
+  b.clearViolations();
+  b.checkVgprRead(/*wave=*/0, /*reg=*/3, /*lane=*/0);
+  EXPECT_TRUE(b.hasVgprRace(3));
+  b.clearViolations();
+  b.checkSgprRead(/*wave=*/0, /*reg=*/4);
+  EXPECT_TRUE(b.hasSgprRace(4));
 }
 
 // ---- LDS cross-wave races ----

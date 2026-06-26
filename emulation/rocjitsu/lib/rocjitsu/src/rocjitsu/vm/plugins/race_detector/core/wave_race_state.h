@@ -84,6 +84,11 @@ public:
   /// violation (outstanding s_load targeting this SGPR).
   void checkSgprRead(int reg) const;
 
+  /// Check a scalar register write for WAW races against pending async scalar
+  /// loads. A pending scalar load may return after a later scalar writer and
+  /// clobber the destination unless the load has been waited out.
+  void checkSgprWrite(int reg) const;
+
   /// True if any outstanding global/LDS store reads from the given VGPR lane.
   bool isOutstandingFromVgpr(int lane, int reg) const;
 

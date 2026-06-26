@@ -144,6 +144,11 @@ public:
       p->onAmdgpuReadSgpr(wf, physical_reg);
   }
 
+  virtual void onAmdgpuWriteSgpr(const amdgpu::Wavefront *wf, uint32_t physical_reg) {
+    for (auto &p : plugins_)
+      p->onAmdgpuWriteSgpr(wf, physical_reg);
+  }
+
   virtual void onAmdgpuBarrierResolved(std::span<amdgpu::Wavefront *> wavefronts) {
     for (auto &p : plugins_)
       p->onAmdgpuBarrierResolved(wavefronts);
