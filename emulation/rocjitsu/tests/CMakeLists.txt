@@ -185,6 +185,24 @@ set(RJ_KMD_PRELOAD_ENV
     "RJ_CONFIG=${CMAKE_SOURCE_DIR}/configs/gfx950_cdna4.json"
 )
 
+# --- Interposer loader initialization regression tests ---
+
+add_library(early_mmap_preload SHARED early_mmap_preload.cpp)
+rj_configure_target(early_mmap_preload TEST)
+add_dependencies(early_mmap_preload rocjitsu_kmd_shim)
+
+add_test(
+    NAME "InterposerTest.EarlyMmapBeforeRocjitsuConstructor"
+    COMMAND /bin/true
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+)
+set_tests_properties(
+    "InterposerTest.EarlyMmapBeforeRocjitsuConstructor"
+    PROPERTIES
+        ENVIRONMENT
+            "LD_PRELOAD=$<TARGET_FILE:early_mmap_preload>:$<TARGET_FILE:rocjitsu_kmd_shim>"
+)
+
 # --- rocminfo test (requires rocminfo binary + HSA runtime + CLI launcher) ---
 # Spawns rocminfo via the rocjitsu CLI and validates output.
 

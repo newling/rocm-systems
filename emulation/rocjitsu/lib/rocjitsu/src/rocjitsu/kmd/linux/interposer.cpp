@@ -41,6 +41,7 @@ RJ_DIAGNOSTIC_POP
 #include <charconv>
 #include <csignal>
 #include <cstdarg>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <dirent.h>
@@ -87,6 +88,13 @@ static int connect_to_daemon() {
 }
 
 namespace {
+
+void *syscall_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset) {
+  long rc = syscall(SYS_mmap, addr, length, prot, flags, fd, offset);
+  if (rc < 0)
+    return MAP_FAILED;
+  return reinterpret_cast<void *>(static_cast<uintptr_t>(rc));
+}
 
 void rj_sigsegv_handler(int, siginfo_t *, void *) {
   signal(SIGSEGV, SIG_DFL);
@@ -1151,6 +1159,13 @@ int fcntl64(int fd, int cmd, ...) {
 }
 
 void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset) {
+  // Some ELF loader paths and third-party library constructors can call mmap
+  // before this interposer's constructor has resolved RTLD_NEXT symbols. That
+  // phase cannot involve rocjitsu-owned KFD/DRM fds yet, so route it through
+  // the kernel directly instead of requiring LibcPassthrough to be initialized.
+  if (!InterposerContext::real.ready())
+    return syscall_mmap(addr, length, prot, flags, fd, offset);
+
   assert(InterposerContext::real.ready());
   if (auto *remote = InterposerContext::ctx.remote_lookup(fd))
     return remote->mmap(addr, length, prot, flags, offset);
