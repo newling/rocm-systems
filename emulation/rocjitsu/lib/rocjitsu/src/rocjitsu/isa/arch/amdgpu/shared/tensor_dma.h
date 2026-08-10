@@ -58,6 +58,7 @@ struct TensorDmaDescriptor {
   std::array<uint32_t, 8> d1{};
   std::array<uint32_t, 4> d2{};
   std::array<uint32_t, 4> d3{};
+  uint32_t count = 0;
   uint64_t global_base = 0;
   uint32_t lds_base = 0;
   uint32_t elem_size = 0;
@@ -112,6 +113,7 @@ inline TensorDmaDescriptor parse_descriptor(std::array<uint32_t, 4> d0, std::arr
 
   // Descriptor bit layout follows LLVM MLIR's gfx1250 TDM lowering in
   // mlir/lib/Conversion/AMDGPUToROCDL/AMDGPUToROCDL.cpp.
+  desc.count = d0[0] & 0x3u;
   desc.gather_indices_32bit = (d0[0] & (1u << 30)) != 0;
   desc.gather = (d0[0] & (1u << 31)) != 0;
   desc.lds_base = d0[1];
@@ -204,6 +206,8 @@ inline void validate_supported_descriptor(const TensorDmaDescriptor &desc, bool 
   }
   if (desc.iterate && (rank < 2 || rank > 3))
     throw util::UnimplementedInst("tensor DMA iterate rank");
+  if (desc.iterate && desc.global_increment % desc.global_strides[0] != 0)
+    throw util::UnimplementedInst("tensor DMA iterate global increment not row-aligned");
   for (uint32_t dim = 0; dim < rank; ++dim) {
     if (desc.tile_dims[dim] == 0)
       throw util::UnimplementedInst("tensor DMA sparse tile dimensions");
@@ -250,13 +254,13 @@ inline void copy_gather_tensor(const TensorDmaDescriptor &desc, Wavefront &wf,
       uint64_t global_element = coord0;
       if (rank == 1) {
         global_element += gather_index;
-        if (desc.tensor_dims[0] != 0 && global_element >= desc.tensor_dims[0])
+        if (global_element >= desc.tensor_dims[0])
           in_bounds = false;
       } else {
         global_element += static_cast<uint64_t>(gather_index) * desc.global_strides[0];
-        if (desc.tensor_dims[0] != 0 && coord0 >= desc.tensor_dims[0])
+        if (coord0 >= desc.tensor_dims[0])
           in_bounds = false;
-        if (desc.tensor_dims[1] != 0 && gather_index >= desc.tensor_dims[1])
+        if (gather_index >= desc.tensor_dims[1])
           in_bounds = false;
       }
 
@@ -278,6 +282,13 @@ inline void copy_dense_tensor(const TensorDmaDescriptor &desc, Wavefront &wf, bo
 
   const uint32_t iteration_count = desc.iterate ? desc.iteration_count : 1;
   for (uint32_t iter = 0; iter < iteration_count; ++iter) {
+    // Iterate mode advances to another row tile. Tensor bounds still describe
+    // the complete remaining tensor, so include that row advance in dim1 OOB
+    // checks rather than treating each repeated tile as starting at row zero.
+    const uint64_t iteration_row =
+        desc.iterate
+            ? static_cast<uint64_t>(iter) * (desc.global_increment / desc.global_strides[0])
+            : 0;
     for (uint64_t linear = 0; linear < element_count; ++linear) {
       uint64_t remaining = linear;
       uint64_t global_element = static_cast<uint64_t>(iter) * desc.global_increment;
@@ -289,7 +300,11 @@ inline void copy_dense_tensor(const TensorDmaDescriptor &desc, Wavefront &wf, bo
         const uint32_t tile_dim = desc.tile_dims[dim];
         const uint32_t coord = static_cast<uint32_t>(remaining % tile_dim);
         remaining /= tile_dim;
-        if (desc.tensor_dims[dim] != 0 && coord >= desc.tensor_dims[dim])
+        const uint64_t tensor_coord = coord + (dim == 1 ? iteration_row : 0);
+        // rank() is defined by the active tile dimensions. A corresponding
+        // tensor dimension of zero therefore means an empty extent, not an
+        // omitted dimension.
+        if (tensor_coord >= desc.tensor_dims[dim])
           in_bounds = false;
         global_element += coord * (dim == 0 ? 1 : desc.global_strides[dim - 1]);
         lds_element += coord * lds_stride;
@@ -346,6 +361,8 @@ TensorDmaDescriptor read_descriptor(const Inst &inst, const Wavefront &wf) {
 template <typename Inst> void execute_tensor_load_to_lds(const Inst &inst, Wavefront &wf) {
   tensor_dma_detail::ScopedWaitCounter counter(wf, WaitCounterType::TENSORCNT);
   const auto desc = tensor_dma_detail::read_descriptor(inst, wf);
+  if (desc.count == 0)
+    return;
   tensor_dma_detail::copy_tensor(desc, wf, false);
   if (desc.atomic_barrier)
     tensor_dma_detail::arrive_atomic_barrier(desc, wf);
@@ -354,6 +371,8 @@ template <typename Inst> void execute_tensor_load_to_lds(const Inst &inst, Wavef
 template <typename Inst> void execute_tensor_store_from_lds(const Inst &inst, Wavefront &wf) {
   tensor_dma_detail::ScopedWaitCounter counter(wf, WaitCounterType::TENSORCNT);
   const auto desc = tensor_dma_detail::read_descriptor(inst, wf);
+  if (desc.count == 0)
+    return;
   tensor_dma_detail::copy_tensor(desc, wf, true);
   if (desc.atomic_barrier)
     tensor_dma_detail::arrive_atomic_barrier(desc, wf);
