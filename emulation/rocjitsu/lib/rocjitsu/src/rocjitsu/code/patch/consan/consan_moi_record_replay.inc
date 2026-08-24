@@ -124,6 +124,7 @@ void try_apply_first_light_access_record_patch(std::span<const uint8_t> bytes,
       code_object.text_sections().size() == 1 ? code_object.text_sections().front()->size() : 0;
   DbiPatchPlacementPlanner placement_planner(arch, original_text_size);
   constexpr uint64_t kIndirectIslandWords = kMoiRecordReplayIndirectIslandWords;
+  constexpr uint64_t kReservedBarrierIslandWords = kMoiLocalIndirectIslandWords;
   uint64_t max_candidate_instruction_words = 0u;
   for (const ConSanMoiCandidate *candidate : candidates) {
     max_candidate_instruction_words = std::max(
@@ -180,10 +181,12 @@ void try_apply_first_light_access_record_patch(std::span<const uint8_t> bytes,
         std::min<uint64_t>(reserved_barrier_island_count, options.max_patches);
   }
   const uint64_t indirect_body_begin =
-      original_text_size + reserved_barrier_island_count * kIndirectIslandWords * sizeof(uint32_t) +
+      original_text_size +
+      reserved_barrier_island_count * kReservedBarrierIslandWords * sizeof(uint32_t) +
       candidates.size() * access_relay_words * sizeof(uint32_t);
   const uint64_t access_island_begin =
-      original_text_size + reserved_barrier_island_count * kIndirectIslandWords * sizeof(uint32_t);
+      original_text_size +
+      reserved_barrier_island_count * kReservedBarrierIslandWords * sizeof(uint32_t);
   uint64_t indirect_body_cursor = indirect_body_begin;
   std::optional<MoiLocalNopIslandAllocator> local_entry_islands;
   std::span<const uint8_t> original_text;

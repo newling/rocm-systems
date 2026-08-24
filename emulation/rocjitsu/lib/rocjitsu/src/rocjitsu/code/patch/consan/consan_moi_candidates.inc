@@ -488,6 +488,9 @@ classify_moi_access_candidate_support(std::span<const uint8_t> bytes,
     return ConSanSiteDispositionReason::InstructionOutOfBounds;
   if (candidate.width_bits == 0 || candidate.width_bits % 8u != 0)
     return ConSanSiteDispositionReason::InvalidAccessWidth;
+  if (candidate.source == ConSanMoiCandidateSource::NativeLds &&
+      candidate.mnemonic.starts_with("buffer_load"))
+    return ConSanSiteDispositionReason::UnsupportedMnemonic;
   if (!candidate.addr_vgpr)
     return ConSanSiteDispositionReason::MissingAddressOperand;
 

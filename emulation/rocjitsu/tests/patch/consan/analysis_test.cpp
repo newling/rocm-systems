@@ -1338,6 +1338,53 @@ TEST(ConSan, CountsCdna4LdsAccessesFromNativeInstructionShapes) {
   EXPECT_FALSE(result.modified);
 }
 
+TEST(ConSan, InventoriesCdna4DirectToLdsProducerAsUnsupportedAccess) {
+  const std::array<uint32_t, 5> text_words = {
+      0xE05D1000u,
+      0x80100008u, // buffer_load_dwordx4 v0, s[64:67], s0 offen lds
+      0xD9FE0000u,
+      0x04000002u, // ds_read_b128 v[4:7], v2
+      build_s_endpgm(ROCJITSU_CODE_ARCH_CDNA4),
+  };
+  ConSanOptions options = moi_options(ConSanMoiEngine::RecordReplay);
+  options.scratch_vgpr = 8u;
+  options.moi_exec_save_sgpr = 80u;
+  options.moi_owner_vgpr = 40u;
+  options.moi_epoch_vgpr = 41u;
+  options.moi_report_buffer_address = 0x123456780000ull;
+  options.moi_report_buffer_size = consan_moi_report_buffer_min_bytes(2, 0, 0, 0);
+  options.moi_track_barriers = false;
+  options.moi_track_atomics = false;
+  options.max_patches = 2u;
+
+  const ConSanResult result = try_patch_consan(
+      make_cdna4_lds_code_object(text_words, "cdna4_direct_to_lds_inventory"), options);
+
+  ASSERT_TRUE(consan_patch_succeeded(result)) << testing::PrintToString(result.errors);
+  ASSERT_EQ(result.kernels.size(), 1u);
+  const ConSanKernelInfo &kernel = result.kernels.front();
+  EXPECT_EQ(kernel.stats.lds_write_count, 1u);
+  EXPECT_EQ(kernel.stats.lds_read_count, 1u);
+  ASSERT_EQ(kernel.lds_sites.size(), 2u);
+  const ConSanLdsSite &producer = kernel.lds_sites.front();
+  EXPECT_EQ(producer.kind, ConSanLdsAccessKind::Write);
+  EXPECT_EQ(producer.mnemonic, "buffer_load_dwordx4");
+  EXPECT_EQ(producer.width_bits, 128u);
+  EXPECT_FALSE(producer.supported_mvp);
+  EXPECT_FALSE(producer.addr_vgpr);
+  EXPECT_EQ(result.moi_candidates.size(), 1u);
+  ASSERT_EQ(result.site_dispositions.size(), 2u);
+  const auto producer_disposition =
+      std::ranges::find(result.site_dispositions, std::string{"buffer_load_dwordx4"},
+                        &ConSanSiteDispositionRecord::mnemonic);
+  ASSERT_NE(producer_disposition, result.site_dispositions.end());
+  EXPECT_EQ(producer_disposition->site_kind, ConSanResourceSiteKind::Access);
+  EXPECT_EQ(producer_disposition->disposition, ConSanSiteDisposition::Unsupported);
+  EXPECT_EQ(producer_disposition->reason, ConSanSiteDispositionReason::UnsupportedMnemonic);
+  EXPECT_EQ(producer_disposition->lowering_outcome, ConSanSiteLoweringOutcome::Unsupported);
+  EXPECT_EQ(producer_disposition->lowering_reason, ConSanSiteLoweringReason::SemanticUnsupported);
+}
+
 TEST(ConSan, InventoriesCdna4HistogramLdsAtomics) {
   constexpr auto add_u32 =
       cdna4::build_ds(cdna4::kDsAddU32Ds, {.offset0 = 4, .addr = 3, .data0 = 7});

@@ -1519,9 +1519,40 @@ void classify_instruction(const Instruction &inst, ConSanKernelStats &stats) {
     ++stats.fence_like_count;
 }
 
+[[nodiscard]] bool is_cdna4_direct_to_lds_load(const Instruction &inst, rj_code_arch_t arch) {
+  if (arch != ROCJITSU_CODE_ARCH_CDNA4 || !inst.mnemonic().starts_with("buffer_load") ||
+      inst.raw_encoding() == nullptr || inst.size() < 2 * static_cast<int>(sizeof(uint32_t)))
+    return false;
+
+  constexpr uint32_t kCdna4MubufLdsBit = 1u << 16u;
+  return (inst.raw_encoding()[0] & kCdna4MubufLdsBit) != 0;
+}
+
+[[nodiscard]] uint32_t direct_to_lds_width_bits(std::string_view mnemonic) {
+  if (mnemonic.ends_with("dwordx4"))
+    return 128u;
+  if (mnemonic.ends_with("dwordx3"))
+    return 96u;
+  if (mnemonic.ends_with("dwordx2"))
+    return 64u;
+  return mnemonic.ends_with("dword") ? 32u : 0u;
+}
+
 void record_lds_site(const Instruction &inst, ConSanKernelInfo &kernel,
-                     uint64_t instruction_text_offset) {
+                     uint64_t instruction_text_offset, rj_code_arch_t arch) {
   const std::string_view mnemonic = inst.mnemonic();
+  if (is_cdna4_direct_to_lds_load(inst, arch)) {
+    ConSanLdsSite site;
+    site.kind = ConSanLdsAccessKind::Write;
+    site.text_offset = instruction_text_offset;
+    site.file_offset = kernel.text_file_offset + instruction_text_offset;
+    site.size = static_cast<uint32_t>(inst.size());
+    site.width_bits = direct_to_lds_width_bits(mnemonic);
+    site.mnemonic = std::string(mnemonic);
+    kernel.lds_sites.push_back(std::move(site));
+    ++kernel.stats.lds_write_count;
+    return;
+  }
   if (!mnemonic.starts_with("ds_") || is_ds_register_lane_operation(mnemonic))
     return;
 
@@ -2210,7 +2241,7 @@ void decode_kernel_stats(std::span<const uint8_t> code_object_bytes, Decoder &de
         call_targets->contains(instruction_text_offset))
       (*call_states)[instruction_text_offset] = flat_pointer_tracker;
     classify_instruction(*inst, kernel.stats);
-    record_lds_site(*inst, kernel, kernel.entry_text_offset + static_cast<uint64_t>(offset));
+    record_lds_site(*inst, kernel, kernel.entry_text_offset + static_cast<uint64_t>(offset), arch);
     const std::span<const uint8_t> previous_instruction_bytes =
         previous_size == 0 ? std::span<const uint8_t>{}
                            : text.subspan(previous_offset, previous_size);
