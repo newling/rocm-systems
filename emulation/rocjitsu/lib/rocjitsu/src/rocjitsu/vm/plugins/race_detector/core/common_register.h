@@ -31,6 +31,16 @@ enum class MemoryEventType {
   N
 };
 
+/// Hardware completion-order class used for finite wait-counter reasoning.
+/// This is deliberately separate from MemoryEventType: one race event type
+/// can cover instructions such as ordinary VMEM and FLAT loads that share a
+/// wait counter but are not guaranteed to complete in order with each other.
+enum class MemoryCompletionOrder {
+  UNORDERED, ///< No usable completion-order guarantee.
+  VMEM,      ///< Non-FLAT VMEM operations sharing an ordered counter stream.
+  LDS,       ///< Native local-DS operations.
+};
+
 /// Event direction helpers: "to VGPR" means a load writing into a VGPR,
 /// "from VGPR" means a store reading out of a VGPR.
 inline bool isToVgpr(MemoryEventType t) {

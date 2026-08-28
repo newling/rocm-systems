@@ -287,6 +287,160 @@ TEST_F(Gfx950RaceTest, vgpr_waitcnt_race) {
   EXPECT_NE(t.mark1.find("global_store_dword"), npos) << "mark1: " << t.mark1;
 }
 
+// --- All-ones wait operands ---
+
+__global__ void vmcnt_no_wait_race_kernel(const float *src, float *dst) {
+  int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  float val;
+  asm volatile(
+      "global_load_dword %0, %1, off\n"
+      "s_waitcnt vmcnt(63)\n"
+      : "=v"(val) : "v"(&src[tid]));
+  dst[tid] = val;
+}
+
+__global__ void lgkmcnt_no_wait_race_kernel(int *dst) {
+  __shared__ int lds[64];
+  int tid = threadIdx.x;
+  lds[tid] = tid + 1;
+  __syncthreads();
+
+  int val;
+  asm volatile(
+      "ds_read_b32 %0, %1\n"
+      "s_waitcnt lgkmcnt(15)\n"
+      : "=v"(val) : "v"(tid * 4) : "memory");
+  dst[tid] = val;
+}
+
+TEST_F(Gfx950RaceTest, vmcnt_no_wait_race) {
+  auto *src = allocWithData<float>(64), *dst = alloc<float>(64);
+  vmcnt_no_wait_race_kernel<<<1, 64>>>(src, dst);
+  sync();
+  auto r = records();
+  ASSERT_EQ(r.size(), 1u);
+  auto t = parseTrace(r[0]);
+  EXPECT_NE(t.mark0.find("global_load_dword"), npos) << "mark0: " << t.mark0;
+  EXPECT_TRUE(anyContains(t.between, "s_waitcnt"));
+  EXPECT_NE(t.mark1.find("global_store_dword"), npos) << "mark1: " << t.mark1;
+}
+
+TEST_F(Gfx950RaceTest, lgkmcnt_no_wait_race) {
+  auto *dst = alloc<int>(64);
+  lgkmcnt_no_wait_race_kernel<<<1, 64>>>(dst);
+  sync();
+  auto r = records();
+  ASSERT_EQ(r.size(), 1u);
+  auto t = parseTrace(r[0]);
+  EXPECT_NE(t.mark0.find("ds_read_b32"), npos) << "mark0: " << t.mark0;
+  EXPECT_TRUE(anyContains(t.between, "s_waitcnt"));
+  EXPECT_NE(t.mark1.find("global_store_dword"), npos) << "mark1: " << t.mark1;
+}
+
+// --- Counter-capacity backpressure ---
+
+__global__ void lgkmcnt_capacity_boundary_kernel(int *dst) {
+  __shared__ int lds[64];
+  int tid = threadIdx.x;
+  lds[tid] = tid + 1;
+  __syncthreads();
+
+  int producer, younger, result;
+  asm volatile(
+      "ds_read_b32 %[producer], %[address]\n"
+      ".rept 15\n"
+      "ds_read_b32 %[younger], %[address]\n"
+      ".endr\n"
+      "v_mov_b32 %[result], %[producer]\n"
+      : [producer] "=&v"(producer), [younger] "=&v"(younger), [result] "=&v"(result)
+      : [address] "v"(tid * 4)
+      : "memory");
+  dst[tid] = result;
+}
+
+__global__ void lgkmcnt_below_capacity_race_kernel(int *dst) {
+  __shared__ int lds[64];
+  int tid = threadIdx.x;
+  lds[tid] = tid + 1;
+  __syncthreads();
+
+  int producer, younger, result;
+  asm volatile(
+      "ds_read_b32 %[producer], %[address]\n"
+      ".rept 14\n"
+      "ds_read_b32 %[younger], %[address]\n"
+      ".endr\n"
+      "v_mov_b32 %[result], %[producer]\n"
+      : [producer] "=&v"(producer), [younger] "=&v"(younger), [result] "=&v"(result)
+      : [address] "v"(tid * 4)
+      : "memory");
+  dst[tid] = result;
+}
+
+__global__ void vmcnt_capacity_boundary_kernel(const float *src, float *dst) {
+  int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  float producer, younger, result;
+  asm volatile(
+      "global_load_dword %[producer], %[address], off\n"
+      ".rept 63\n"
+      "global_load_dword %[younger], %[address], off\n"
+      ".endr\n"
+      "v_mov_b32 %[result], %[producer]\n"
+      : [producer] "=&v"(producer), [younger] "=&v"(younger), [result] "=&v"(result)
+      : [address] "v"(&src[tid])
+      : "memory");
+  dst[tid] = result;
+}
+
+__global__ void vmcnt_below_capacity_race_kernel(const float *src, float *dst) {
+  int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  float producer, younger, result;
+  asm volatile(
+      "global_load_dword %[producer], %[address], off\n"
+      ".rept 62\n"
+      "global_load_dword %[younger], %[address], off\n"
+      ".endr\n"
+      "v_mov_b32 %[result], %[producer]\n"
+      : [producer] "=&v"(producer), [younger] "=&v"(younger), [result] "=&v"(result)
+      : [address] "v"(&src[tid])
+      : "memory");
+  dst[tid] = result;
+}
+
+TEST_F(Gfx950RaceTest, lgkmcnt_capacity_boundary) {
+  lgkmcnt_capacity_boundary_kernel<<<1, 64>>>(alloc<int>(64));
+  sync();
+  ExpectNoRace();
+}
+
+TEST_F(Gfx950RaceTest, lgkmcnt_below_capacity_race) {
+  lgkmcnt_below_capacity_race_kernel<<<1, 64>>>(alloc<int>(64));
+  sync();
+  auto r = records();
+  ASSERT_EQ(r.size(), 1u);
+  auto t = parseTrace(r[0]);
+  EXPECT_NE(t.mark0.find("ds_read_b32"), npos) << "mark0: " << t.mark0;
+  EXPECT_NE(t.mark1.find("v_mov_b32"), npos) << "mark1: " << t.mark1;
+}
+
+TEST_F(Gfx950RaceTest, vmcnt_capacity_boundary) {
+  auto *src = allocWithData<float>(64), *dst = alloc<float>(64);
+  vmcnt_capacity_boundary_kernel<<<1, 64>>>(src, dst);
+  sync();
+  ExpectNoRace();
+}
+
+TEST_F(Gfx950RaceTest, vmcnt_below_capacity_race) {
+  auto *src = allocWithData<float>(64), *dst = alloc<float>(64);
+  vmcnt_below_capacity_race_kernel<<<1, 64>>>(src, dst);
+  sync();
+  auto r = records();
+  ASSERT_EQ(r.size(), 1u);
+  auto t = parseTrace(r[0]);
+  EXPECT_NE(t.mark0.find("global_load_dword"), npos) << "mark0: " << t.mark0;
+  EXPECT_NE(t.mark1.find("v_mov_b32"), npos) << "mark1: " << t.mark1;
+}
+
 // --- SGPR waitcnt ---
 
 __global__ void sgpr_no_race_kernel(const int *src, int *dst) {

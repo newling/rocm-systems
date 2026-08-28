@@ -165,13 +165,36 @@ Every in-flight memory operation has an **event** that goes through the
 following lifecycle:
 
 1. **ACTIVE** — the operation is in flight.
-1. **WAVE_COMPLETE** — `s_waitcnt` has retired the event for the owning wave.
-   This means the event is no longer in flight from the perspective of the wave
-   that issued the operation, but is still in flight from the perspective of
-   other waves in the same workgroup.
+1. **WAVE_COMPLETE** — an explicit wait or ordered counter-capacity
+   backpressure has completed the event for the owning wave. This means the
+   event is no longer in flight from the perspective of that wave, but is still
+   unsynchronized with other waves in the same workgroup.
 1. **RETIRED** — `s_barrier` has synchronized all waves. The event is fully
    retired and, from the perspective of all threads in all wavefronts, the
    operation is complete.
+
+An all-ones wait-count field is the architectural “do not wait” value. CDNA's
+four-bit `lgkmcnt(15)` and six-bit `vmcnt(63)` therefore retire no events;
+`lgkmcnt(14)` and `vmcnt(62)` are the largest values that can impose an
+explicit wait. Hardware also prevents counter overflow by stalling issue.
+
+The physical LGKMCNT capacity is shared by every event accounted to LGKMCNT,
+including LDS, GDS, scalar-memory, and message operations. Sharing that counter
+does not mean those event classes complete in order with each other. The
+detector therefore uses the 15-entry limit to retire a particular LDS event
+only when 15 later local-LDS operations alone provide that proof. Mixed-class
+counter pressure can also stall hardware, but does not identify which event
+completed and remains conservatively pending in the detector. VMCNT is handled
+the same way for its 63-entry ordered non-FLAT VMEM class.
+
+gfx9/CDNA encodes VM, export, and LGKM waits in `s_waitcnt`. The standalone
+`s_waitcnt_vmcnt` and `s_waitcnt_lgkmcnt` forms belong to GFX10/GFX11 and are
+handled for supported RDNA targets such as gfx1151. gfx12 uses separate
+instructions including `s_wait_loadcnt` and `s_wait_dscnt`; modeling those
+split counters is outside the race detector's current target scope.
+
+The same completion-order distinction is used for nonzero partial waits; a
+zero wait still completes every event on the selected counter.
 
 The plugin keeps track, for all registers and LDS memory bytes, of which memory
 operations are in flight. When an instruction in the emulator accesses an LDS

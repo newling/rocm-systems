@@ -4,6 +4,7 @@
 #include "rocjitsu/vm/plugins/race_detector/plugin.h"
 
 #include "rocjitsu/isa/instruction.h"
+#include "rocjitsu/vm/amdgpu/compute_unit.h"
 #include "rocjitsu/vm/amdgpu/mem_state.h"
 #include "rocjitsu/vm/amdgpu/wavefront.h"
 #include "util/log.h"
@@ -16,6 +17,7 @@
 #include <mutex>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
 
 namespace rocjitsu::plugins::race_detector {
 
@@ -29,7 +31,78 @@ void warn_cluster_peer_writes_ignored_once() {
   });
 }
 
+int lgkmcnt_no_wait_value(rj_code_arch_t arch) {
+  switch (arch) {
+  case ROCJITSU_CODE_ARCH_CDNA1:
+  case ROCJITSU_CODE_ARCH_CDNA2:
+  case ROCJITSU_CODE_ARCH_CDNA3:
+  case ROCJITSU_CODE_ARCH_CDNA4:
+    return 15;
+  default:
+    return 63;
+  }
+}
+
+bool models_cdna_ordered_counter_backpressure(rj_code_arch_t arch) {
+  return arch == ROCJITSU_CODE_ARCH_CDNA1 || arch == ROCJITSU_CODE_ARCH_CDNA2 ||
+         arch == ROCJITSU_CODE_ARCH_CDNA3 || arch == ROCJITSU_CODE_ARCH_CDNA4;
+}
+
+MemoryCompletionOrder completion_order_for(const Instruction &inst, rj_code_arch_t arch) {
+  if (!inst.is_memory_op())
+    return MemoryCompletionOrder::UNORDERED;
+
+  const std::string_view mnemonic = inst.mnemonic();
+  if (mnemonic.starts_with("ds_")) {
+    // GDS shares LGKMCNT with LDS but is a distinct completion-order class.
+    return inst.disassemble().find(" gds") == std::string::npos ? MemoryCompletionOrder::LDS
+                                                                : MemoryCompletionOrder::UNORDERED;
+  }
+
+  // Generic FLAT operations can return out of order with each other and other
+  // VMEM operations, even though they contribute to the same wait counters.
+  if (mnemonic.starts_with("flat_"))
+    return MemoryCompletionOrder::UNORDERED;
+
+  // CDNA has no separate VSCNT. All non-FLAT VMEM events share one in-order
+  // VMCNT stream. On targets with split load/store counters, keep only the
+  // ordinary load class here.
+  if (models_cdna_ordered_counter_backpressure(arch) &&
+      (mnemonic.starts_with("global_") || mnemonic.starts_with("scratch_") ||
+       mnemonic.starts_with("buffer_") || mnemonic.starts_with("tbuffer_") ||
+       mnemonic.starts_with("image_"))) {
+    return MemoryCompletionOrder::VMEM;
+  }
+  if (mnemonic.starts_with("global_load") || mnemonic.starts_with("scratch_load") ||
+      mnemonic.starts_with("buffer_load") || mnemonic.starts_with("tbuffer_load") ||
+      mnemonic.starts_with("image_load"))
+    return MemoryCompletionOrder::VMEM;
+
+  return MemoryCompletionOrder::UNORDERED;
+}
+
 } // namespace
+
+MemoryCompletionOrder memoryCompletionOrderForRaceDetector(const Instruction &inst,
+                                                           rj_code_arch_t arch) {
+  return completion_order_for(inst, arch);
+}
+
+std::optional<PendingWaitCount> waitCountForRaceDetector(std::string_view mnemonic, int vmcnt,
+                                                         int lgkmcnt) {
+  PendingWaitCount waitCount;
+  if (mnemonic == "s_waitcnt") {
+    waitCount.vmcnt = vmcnt;
+    waitCount.lgkmcnt = lgkmcnt;
+  } else if (mnemonic == "s_waitcnt_vmcnt") {
+    waitCount.vmcnt = vmcnt;
+  } else if (mnemonic == "s_waitcnt_lgkmcnt") {
+    waitCount.lgkmcnt = lgkmcnt;
+  } else {
+    return std::nullopt;
+  }
+  return waitCount;
+}
 
 // Declared in plugin.h (used by formatTrace tests in execution_plugin_test.cpp).
 MarkedPc findConflict(const RaceViolation &v, RaceDetector &detector) {
@@ -232,7 +305,9 @@ void RaceDetectorPlugin::onAmdgpuWorkgroupDispatched(uint32_t dispatch_id, uint3
   std::lock_guard<std::mutex> lock(dispatch_mutex_);
   detectors_[key] = std::make_unique<RaceDetector>(
       static_cast<int>(num_waves), static_cast<int>(physical_vgpr_count),
-      static_cast<int>(sgpr_count), Dim3d(static_cast<int>(wg_id)), std::move(handler));
+      static_cast<int>(sgpr_count), Dim3d(static_cast<int>(wg_id)), std::move(handler),
+      /*vmcntNoWait=*/63, lgkmcnt_no_wait_value(wavefronts.front()->cu().arch()),
+      models_cdna_ordered_counter_backpressure(wavefronts.front()->cu().arch()));
 
   auto &det = *detectors_[key];
   auto &dc = dispatch_disasm_[dispatch_id];
@@ -257,6 +332,7 @@ void RaceDetectorPlugin::onAmdgpuRouteMemoryInstruction(const Instruction &inst,
   if (inst.data()->tag() == amdgpu::LOCAL_MEM) {
     auto &d = *inst.data_as<amdgpu::VectorMemState>();
     auto type = d.is_load ? MemoryEventType::LDS_TO_VGPR : MemoryEventType::VGPR_TO_LDS;
+    const auto completionOrder = memoryCompletionOrderForRaceDetector(inst, wf.cu().arch());
 
     for (uint32_t lane = 0; lane < wf.wf_size(); ++lane) {
       if (!(wf.exec() & (1ULL << lane)))
@@ -278,18 +354,20 @@ void RaceDetectorPlugin::onAmdgpuRouteMemoryInstruction(const Instruction &inst,
       uint8_t byte_mask = d.d16_lo ? 0x3 : d.d16_hi ? 0xC : 0xF;
       for (uint32_t i = 0; i < d.num_elems; ++i) {
         registers[i] = logicalBase + i;
-        rs->checkVgprWrite(static_cast<int>(logicalBase + i), wf.exec(), byte_mask, type);
+        rs->checkVgprWrite(static_cast<int>(logicalBase + i), wf.exec(), byte_mask,
+                           completionOrder);
       }
     }
     uint8_t byte_mask = d.d16_lo ? 0x3 : d.d16_hi ? 0xC : 0xF;
     rs->registerLdsEvent(wf.pc, type, std::move(registers), wf.exec(), wf.wf_size(),
-                         std::span<const uint32_t>(laneAddrs, wf.wf_size()), d.elem_size,
-                         byte_mask);
+                         std::span<const uint32_t>(laneAddrs, wf.wf_size()), d.elem_size, byte_mask,
+                         completionOrder);
   }
 
   if (inst.data()->tag() == amdgpu::GLOBAL_MEM) {
     auto &d = *inst.data_as<amdgpu::VectorMemState>();
     if (d.lds_dst) {
+      const auto completionOrder = memoryCompletionOrderForRaceDetector(inst, wf.cu().arch());
       uint32_t perLaneBytes = d.num_elems * d.elem_size;
       if (d.cluster_multicast && d.cluster_mcast_mask != 0) {
         uint32_t selfMask = amdgpu::cluster_multicast_rank_mask(wf.cluster_rank());
@@ -304,20 +382,24 @@ void RaceDetectorPlugin::onAmdgpuRouteMemoryInstruction(const Instruction &inst,
         ldsAddrs[lane] =
             d.lds_per_lane_addr ? d.per_lane_lds_addr[lane] : d.lds_base + lane * perLaneBytes;
       rs->registerLdsEvent(wf.pc, MemoryEventType::GLOBAL_TO_LDS, {}, d.lane_mask, wf.wf_size(),
-                           std::span<const uint32_t>(ldsAddrs, wf.wf_size()), perLaneBytes);
+                           std::span<const uint32_t>(ldsAddrs, wf.wf_size()), perLaneBytes,
+                           /*byteMask=*/0xF, completionOrder);
     } else if (d.is_load && d.dst_reg_base >= wf.vgpr_alloc().base) {
+      constexpr MemoryEventType type = MemoryEventType::GLOBAL_TO_VGPR;
+      const auto completionOrder = memoryCompletionOrderForRaceDetector(inst, wf.cu().arch());
       uint32_t logicalBase = d.dst_reg_base - wf.vgpr_alloc().base;
       std::vector<uint32_t> registers(d.num_elems);
       uint8_t byte_mask = d.d16_lo ? 0x3 : d.d16_hi ? 0xC : 0xF;
       for (uint32_t i = 0; i < d.num_elems; ++i) {
         registers[i] = logicalBase + i;
         rs->checkVgprWrite(static_cast<int>(logicalBase + i), wf.exec(), byte_mask,
-                           MemoryEventType::GLOBAL_TO_VGPR);
+                           completionOrder);
       }
-      rs->registerEvent(wf.pc, MemoryEventType::GLOBAL_TO_VGPR, std::move(registers), wf.exec(),
-                        byte_mask);
+      rs->registerEvent(wf.pc, type, std::move(registers), wf.exec(), byte_mask, completionOrder);
     } else if (!d.is_load) {
-      rs->registerEvent(wf.pc, MemoryEventType::VGPR_TO_GLOBAL, {}, wf.exec());
+      rs->registerEvent(wf.pc, MemoryEventType::VGPR_TO_GLOBAL, {}, wf.exec(),
+                        /*byteMask=*/0xF,
+                        memoryCompletionOrderForRaceDetector(inst, wf.cu().arch()));
     }
   }
 
@@ -360,6 +442,8 @@ void RaceDetectorPlugin::onAmdgpuBeforeExecuteInstruction(uint64_t pc, const Ins
                                                           amdgpu::Wavefront &wf) {
   auto *s = get_state(wf);
   assert(s);
+  assert(s->race_state);
+  s->race_state->prepareForMemoryEvent(memoryCompletionOrderForRaceDetector(inst, wf.cu().arch()));
   s->trace.push(pc);
   s->disasm->record(pc, inst);
 }
@@ -369,11 +453,13 @@ void RaceDetectorPlugin::onAmdgpuAfterExecuteInstruction(uint64_t /*pc*/, const 
   auto *s = get_state(wf);
   assert(s && s->race_state);
 
-  if (inst.mnemonic().starts_with("s_waitcnt")) {
-    auto &tgt = wf.wait_target();
-    s->race_state->dispatch(
-        PendingWaitCount{static_cast<int>(tgt.vmcnt), static_cast<int>(tgt.lgkmcnt)});
-  }
+  const std::string_view mnemonic = inst.mnemonic();
+  const auto &target = wf.wait_target();
+  const auto waitCount = waitCountForRaceDetector(mnemonic, static_cast<int>(target.vmcnt),
+                                                  static_cast<int>(target.lgkmcnt));
+  if (!waitCount)
+    return;
+  s->race_state->dispatch(*waitCount);
 }
 
 void RaceDetectorPlugin::onAmdgpuBarrierResolved(std::span<amdgpu::Wavefront *> wavefronts) {

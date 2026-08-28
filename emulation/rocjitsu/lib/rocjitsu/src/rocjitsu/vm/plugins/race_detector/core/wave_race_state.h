@@ -21,7 +21,12 @@ class RaceDetector;
 /// event allocation and lifecycle transitions.
 class WaveRaceState {
 public:
-  WaveRaceState(int vgprCount, int sgprCount, WaveId, RaceDetector *);
+  WaveRaceState(int vgprCount, int sgprCount, WaveId, RaceDetector *, int vmcntNoWait,
+                int lgkmcntNoWait, bool modelOrderedCounterBackpressure);
+
+  /// Apply the issue backpressure required to keep a hardware counter from
+  /// overflowing before an ordered memory operation is dispatched.
+  void prepareForMemoryEvent(MemoryCompletionOrder);
 
   /// Register an in-flight memory event that does not involve LDS.
   /// \param pc The PC of the instruction that produced the event.
@@ -31,7 +36,8 @@ public:
   /// \param byteMask The byte mask of the event, if this event effects only certain bytes offset
   ///                 register(s). Defaults to 0xF (all bytes).
   void registerEvent(uint64_t pc, MemoryEventType type, std::vector<uint32_t> registers,
-                     uint64_t execMask, uint8_t byteMask = 0xF);
+                     uint64_t execMask, uint8_t byteMask = 0xF,
+                     MemoryCompletionOrder completionOrder = MemoryCompletionOrder::UNORDERED);
 
   /// Register an in-flight memory event that involves LDS.
   /// The LDS memory involved is defined by `laneBaseAddresses` and `bytesPerLane`. Each active lane
@@ -39,22 +45,22 @@ public:
   void registerLdsEvent(uint64_t pc, MemoryEventType type, std::vector<uint32_t> registers,
                         uint64_t execMask, int waveSize,
                         std::span<const uint32_t> laneBaseAddresses, int bytesPerLane,
-                        uint8_t byteMask = 0xF);
+                        uint8_t byteMask = 0xF,
+                        MemoryCompletionOrder completionOrder = MemoryCompletionOrder::UNORDERED);
 
   /// Register an LDS event with dual-offset intervals. Each active lane
   /// contributes two 8-byte intervals at laneBaseAddresses[lane] + offset0*8
   /// and laneBaseAddresses[lane] + offset1*8. So each active lane contributes 2 intervals of 8
   /// bytes each.
-  void registerDualOffsetLdsEvent(uint64_t pc, MemoryEventType type,
-                                  std::vector<uint32_t> registers, uint64_t execMask, int waveSize,
-                                  std::span<const uint32_t> laneBaseAddresses, int32_t offset0,
-                                  int32_t offset1);
+  void registerDualOffsetLdsEvent(
+      uint64_t pc, MemoryEventType type, std::vector<uint32_t> registers, uint64_t execMask,
+      int waveSize, std::span<const uint32_t> laneBaseAddresses, int32_t offset0, int32_t offset1,
+      MemoryCompletionOrder completionOrder = MemoryCompletionOrder::UNORDERED);
 
-  /// Retire global memory events until `vmcnt` or fewer remain outstanding. 'Retire' here means
-  /// marking the event as wave-complete.
+  /// Mark every global-memory event provably completed by `vmcnt` as wave-complete.
   void sWaitCntVmcnt(int vmcnt);
 
-  /// Retire LDS events until at `lgkmcnt` or fewer remain outstanding.
+  /// Mark every LDS/scalar event provably completed by `lgkmcnt` as wave-complete.
   void sWaitCntLgkmcnt(int lgkmcnt);
 
   /// Dispatch a pending memory event produced by an instruction executor.
@@ -87,7 +93,7 @@ public:
   /// ordered, but (for example) a VMEM load and an LDS load can complete out
   /// of order. Calls the RaceHandler on violation.
   void checkVgprWrite(int reg, uint64_t execMask, uint8_t byteMask,
-                      MemoryEventType currentType) const;
+                      MemoryCompletionOrder currentCompletionOrder) const;
 
   /// Check a scalar register read for races. Calls the RaceHandler on
   /// violation (outstanding s_load targeting this SGPR).
@@ -116,7 +122,8 @@ public:
 
 private:
   void registerEventWithIntervals(uint64_t pc, MemoryEventType, std::vector<uint32_t> registers,
-                                  uint64_t execMask, uint8_t byteMask, IntervalSet ldsIntervals);
+                                  uint64_t execMask, uint8_t byteMask, IntervalSet ldsIntervals,
+                                  MemoryCompletionOrder completionOrder);
   void retireEventRegisters(EventId);
 
   template <typename Pred> void resolveWaitCnt(int limit, Pred isTargetType);
@@ -137,6 +144,10 @@ private:
 
   std::vector<EventId> waveMemoryEvents;
   std::vector<EventId> barrierPendingEvents;
+
+  int vmcntNoWait;
+  int lgkmcntNoWait;
+  bool modelOrderedCounterBackpressure;
 
   WaveId waveId;
   RaceDetector *detector;

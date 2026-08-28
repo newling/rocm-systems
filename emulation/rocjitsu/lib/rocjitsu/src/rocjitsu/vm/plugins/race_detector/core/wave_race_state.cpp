@@ -4,6 +4,7 @@
 #include "rocjitsu/vm/plugins/race_detector/core/wave_race_state.h"
 #include "rocjitsu/vm/plugins/race_detector/core/interval_set.h"
 #include "rocjitsu/vm/plugins/race_detector/core/race_detector.h"
+#include <algorithm>
 #include <bit>
 #include <span>
 
@@ -17,8 +18,12 @@ struct ProfileScope {
 };
 } // namespace
 
-WaveRaceState::WaveRaceState(int vgprCount, int sgprCount, WaveId waveId, RaceDetector *detector)
-    : waveId(waveId), detector(detector) {
+WaveRaceState::WaveRaceState(int vgprCount, int sgprCount, WaveId waveId, RaceDetector *detector,
+                             int vmcntNoWait, int lgkmcntNoWait,
+                             bool modelOrderedCounterBackpressure)
+    : vmcntNoWait(vmcntNoWait), lgkmcntNoWait(lgkmcntNoWait),
+      modelOrderedCounterBackpressure(modelOrderedCounterBackpressure), waveId(waveId),
+      detector(detector) {
   vgprMemoryEvents.resize(vgprCount);
   sgprMemoryEvents.resize(sgprCount);
   sgprEventCount.resize(sgprCount, 0);
@@ -28,35 +33,40 @@ WaveRaceState::WaveRaceState(int vgprCount, int sgprCount, WaveId waveId, RaceDe
 }
 
 void WaveRaceState::dispatch(PendingMemoryEvent event) {
+  prepareForMemoryEvent(event.completionOrder);
   if (event.isDualOffset) {
     registerDualOffsetLdsEvent(event.pc, event.type, std::move(event.registers), event.execMask,
                                event.waveSize, event.laneBaseAddresses, event.offset0,
-                               event.offset1);
+                               event.offset1, event.completionOrder);
   } else if (!event.laneBaseAddresses.empty()) {
     registerLdsEvent(event.pc, event.type, std::move(event.registers), event.execMask,
-                     event.waveSize, event.laneBaseAddresses, event.bytesPerLane, event.byteMask);
+                     event.waveSize, event.laneBaseAddresses, event.bytesPerLane, event.byteMask,
+                     event.completionOrder);
   } else {
-    registerEvent(event.pc, event.type, std::move(event.registers), event.execMask, event.byteMask);
+    registerEvent(event.pc, event.type, std::move(event.registers), event.execMask, event.byteMask,
+                  event.completionOrder);
   }
 }
 
 void WaveRaceState::dispatch(PendingWaitCount waitCount) {
-  if (waitCount.vmcnt >= 0) {
+  if (waitCount.vmcnt >= 0 && waitCount.vmcnt != vmcntNoWait) {
     sWaitCntVmcnt(waitCount.vmcnt);
   }
-  if (waitCount.lgkmcnt >= 0) {
+  if (waitCount.lgkmcnt >= 0 && waitCount.lgkmcnt != lgkmcntNoWait) {
     sWaitCntLgkmcnt(waitCount.lgkmcnt);
   }
 }
 
 void WaveRaceState::registerEvent(uint64_t pc, MemoryEventType type, std::vector<uint32_t> regIds,
-                                  uint64_t execMask, uint8_t byteMask) {
-  registerEventWithIntervals(pc, type, std::move(regIds), execMask, byteMask, {});
+                                  uint64_t execMask, uint8_t byteMask,
+                                  MemoryCompletionOrder completionOrder) {
+  registerEventWithIntervals(pc, type, std::move(regIds), execMask, byteMask, {}, completionOrder);
 }
 
 void WaveRaceState::registerEventWithIntervals(uint64_t pc, MemoryEventType type,
                                                std::vector<uint32_t> regIds, uint64_t execMask,
-                                               uint8_t byteMask, IntervalSet ldsIntervals) {
+                                               uint8_t byteMask, IntervalSet ldsIntervals,
+                                               MemoryCompletionOrder completionOrder) {
   ProfileScope ps(*profiler_, "registerEvent");
   bool toSgpr = isToSgpr(type);
   if (!toSgpr) {
@@ -66,7 +76,7 @@ void WaveRaceState::registerEventWithIntervals(uint64_t pc, MemoryEventType type
   }
 
   auto eventId = detector->allocateEventId(waveId, pc, type, std::move(regIds), execMask, byteMask,
-                                           std::move(ldsIntervals));
+                                           std::move(ldsIntervals), completionOrder);
   for (uint32_t reg : detector->events().registers(eventId)) {
     if (toSgpr) {
       sgprMemoryEvents[reg].push_back(eventId);
@@ -78,10 +88,42 @@ void WaveRaceState::registerEventWithIntervals(uint64_t pc, MemoryEventType type
   waveMemoryEvents.push_back(eventId);
 }
 
+void WaveRaceState::prepareForMemoryEvent(MemoryCompletionOrder completionOrder) {
+  if (!modelOrderedCounterBackpressure || completionOrder == MemoryCompletionOrder::UNORDERED) {
+    return;
+  }
+
+  // The all-ones no-wait value is also the largest representable number of
+  // outstanding operations on these counters. The physical counter is shared
+  // by several event kinds, but only same-class occupancy proves which event
+  // completed; mixed-class pressure remains deliberately conservative.
+  const int capacity = completionOrder == MemoryCompletionOrder::VMEM ? vmcntNoWait : lgkmcntNoWait;
+  int orderedPending = 0;
+  for (EventId eventId : waveMemoryEvents) {
+    if (detector->events().completionOrder(eventId) == completionOrder)
+      ++orderedPending;
+  }
+  if (orderedPending < capacity)
+    return;
+
+  for (auto it = waveMemoryEvents.begin(); it != waveMemoryEvents.end(); ++it) {
+    const EventId eventId = *it;
+    if (detector->events().completionOrder(eventId) != completionOrder)
+      continue;
+    retireEventRegisters(eventId);
+    detector->markEventWaveComplete(eventId);
+    if (!detector->events().isTrimmable(eventId))
+      barrierPendingEvents.push_back(eventId);
+    waveMemoryEvents.erase(it);
+    return;
+  }
+}
+
 void WaveRaceState::registerLdsEvent(uint64_t pc, MemoryEventType type,
                                      std::vector<uint32_t> registers, uint64_t execMask,
                                      int waveSize, std::span<const uint32_t> laneBaseAddresses,
-                                     int bytesPerLane, uint8_t byteMask) {
+                                     int bytesPerLane, uint8_t byteMask,
+                                     MemoryCompletionOrder completionOrder) {
   IntervalSet intervals;
   forEachActiveLane(execMask, waveSize, [&](int lane) {
     int addr = static_cast<int>(laneBaseAddresses[lane]);
@@ -89,14 +131,15 @@ void WaveRaceState::registerLdsEvent(uint64_t pc, MemoryEventType type,
   });
   intervals.finalize();
   registerEventWithIntervals(pc, type, std::move(registers), execMask, byteMask,
-                             std::move(intervals));
+                             std::move(intervals), completionOrder);
 }
 
 void WaveRaceState::registerDualOffsetLdsEvent(uint64_t pc, MemoryEventType type,
                                                std::vector<uint32_t> registers, uint64_t execMask,
                                                int waveSize,
                                                std::span<const uint32_t> laneBaseAddresses,
-                                               int32_t offset0, int32_t offset1) {
+                                               int32_t offset0, int32_t offset1,
+                                               MemoryCompletionOrder completionOrder) {
   IntervalSet intervals;
   forEachActiveLane(execMask, waveSize, [&](int lane) {
     uint32_t vAddr = laneBaseAddresses[lane];
@@ -106,7 +149,8 @@ void WaveRaceState::registerDualOffsetLdsEvent(uint64_t pc, MemoryEventType type
     intervals.append(intAddr1, intAddr1 + 8);
   });
   intervals.finalize();
-  registerEventWithIntervals(pc, type, std::move(registers), execMask, 0xF, std::move(intervals));
+  registerEventWithIntervals(pc, type, std::move(registers), execMask, 0xF, std::move(intervals),
+                             completionOrder);
 }
 
 void WaveRaceState::retireEventRegisters(EventId eventId) {
@@ -125,32 +169,52 @@ void WaveRaceState::retireEventRegisters(EventId eventId) {
 }
 
 template <typename Pred> void WaveRaceState::resolveWaitCnt(int limit, Pred isTargetType) {
-  int total = 0;
-  for (auto eid : waveMemoryEvents)
-    if (isTargetType(detector->events().type(eid)))
-      total++;
-  int toRetire = total - limit;
-  if (toRetire <= 0)
-    return;
-
-  int retired = 0;
-  size_t write = 0;
-  for (size_t read = 0; read < waveMemoryEvents.size(); ++read) {
-    EventId eid = waveMemoryEvents[read];
-    if (isTargetType(detector->events().type(eid)) && retired < toRetire) {
-      retired++;
-      retireEventRegisters(eid);
-      detector->markEventWaveComplete(eid);
-      // Trimmable WAVE_COMPLETE events may be removed from the registry
-      // immediately. Only keep non-trimmable events for later barrier retire;
-      // otherwise a later barrier could try to retire stale EventIds.
-      if (!detector->events().isTrimmable(eid))
-        barrierPendingEvents.push_back(eid);
-    } else {
-      waveMemoryEvents[write++] = eid;
+  auto retireOldest = [&](int toRetire, auto matches) {
+    if (toRetire <= 0)
+      return;
+    int retired = 0;
+    size_t write = 0;
+    for (size_t read = 0; read < waveMemoryEvents.size(); ++read) {
+      EventId eventId = waveMemoryEvents[read];
+      if (matches(eventId) && retired < toRetire) {
+        ++retired;
+        retireEventRegisters(eventId);
+        detector->markEventWaveComplete(eventId);
+        // Trimmable WAVE_COMPLETE events may be removed from the registry
+        // immediately. Only keep non-trimmable events for later barrier retire;
+        // otherwise a later barrier could try to retire stale EventIds.
+        if (!detector->events().isTrimmable(eventId))
+          barrierPendingEvents.push_back(eventId);
+      } else {
+        waveMemoryEvents[write++] = eventId;
+      }
     }
+    waveMemoryEvents.resize(write);
+  };
+
+  auto targetsCounter = [&](EventId eventId) {
+    return isTargetType(detector->events().type(eventId));
+  };
+  if (limit == 0) {
+    retireOldest(static_cast<int>(std::ranges::count_if(waveMemoryEvents, targetsCounter)),
+                 targetsCounter);
+    return;
   }
-  waveMemoryEvents.resize(write);
+
+  // A nonzero wait guarantees only that at most `limit` events remain on the
+  // entire counter. For each independently ordered class, if more than
+  // `limit` events from that class are pending, the excess oldest events must
+  // have completed. No particular unordered event (notably SMEM or FLAT) can
+  // be selected safely.
+  for (MemoryCompletionOrder completionOrder :
+       {MemoryCompletionOrder::VMEM, MemoryCompletionOrder::LDS}) {
+    auto belongsToOrder = [&](EventId eventId) {
+      return targetsCounter(eventId) &&
+             detector->events().completionOrder(eventId) == completionOrder;
+    };
+    const int pending = static_cast<int>(std::ranges::count_if(waveMemoryEvents, belongsToOrder));
+    retireOldest(pending - limit, belongsToOrder);
+  }
 }
 
 void WaveRaceState::sWaitCntVmcnt(int vmcnt) {
@@ -228,12 +292,16 @@ void WaveRaceState::checkVgprReadAllLanes(int reg) const {
 }
 
 void WaveRaceState::checkVgprWrite(int reg, uint64_t execMask, uint8_t byteMask,
-                                   MemoryEventType currentType) const {
+                                   MemoryCompletionOrder currentCompletionOrder) const {
   for (EventId eid : vgprMemoryEvents[reg]) {
     const MemoryEventType pendingType = detector->events().type(eid);
-    if (!isToVgpr(pendingType) || pendingType == currentType ||
-        (detector->events().byteMask(eid) & byteMask) == 0)
+    const MemoryCompletionOrder pendingCompletionOrder = detector->events().completionOrder(eid);
+    const bool orderedWithCurrent = currentCompletionOrder != MemoryCompletionOrder::UNORDERED &&
+                                    pendingCompletionOrder == currentCompletionOrder;
+    if (!isToVgpr(pendingType) || orderedWithCurrent ||
+        (detector->events().byteMask(eid) & byteMask) == 0) {
       continue;
+    }
 
     const uint64_t overlappingLanes = detector->events().execMask(eid) & execMask;
     if (overlappingLanes == 0)

@@ -20,10 +20,12 @@ namespace rocjitsu::plugins::race_detector {
 
 class RaceTestBuilder {
 public:
-  RaceTestBuilder(int numWaves, int vgprs, int sgprs, int waveSize = 64, Dim3d wgId = Dim3d(0))
+  RaceTestBuilder(int numWaves, int vgprs, int sgprs, int waveSize = 64, Dim3d wgId = Dim3d(0),
+                  bool modelOrderedCounterBackpressure = true)
       : waveSize_(waveSize), defaultExec_(waveSize == 64 ? ~0ULL : (1ULL << waveSize) - 1) {
     detector_ = std::make_unique<RaceDetector>(
-        numWaves, vgprs, sgprs, wgId, [this](RaceViolation v) { violations_.push_back(v); });
+        numWaves, vgprs, sgprs, wgId, [this](RaceViolation v) { violations_.push_back(v); },
+        /*vmcntNoWait=*/63, /*lgkmcntNoWait=*/15, modelOrderedCounterBackpressure);
     for (int w = 0; w < numWaves; ++w) {
       waves_.push_back(&detector_->getWaveRaceState(w));
     }
@@ -32,17 +34,19 @@ public:
   // -- Memory events --
 
   /// Register a global load into VGPRs (tracked by vmcnt).
-  void globalLoad(int wave, int vgprBase, int numRegs, uint64_t exec = 0, uint8_t byteMask = 0xF) {
+  void globalLoad(int wave, int vgprBase, int numRegs, uint64_t exec = 0, uint8_t byteMask = 0xF,
+                  MemoryCompletionOrder completionOrder = MemoryCompletionOrder::VMEM) {
     if (!exec) {
       exec = defaultExec_;
     }
+    waves_[wave]->prepareForMemoryEvent(completionOrder);
     std::vector<uint32_t> regs(numRegs);
     for (int i = 0; i < numRegs; ++i) {
       regs[i] = vgprBase + i;
-      waves_[wave]->checkVgprWrite(vgprBase + i, exec, byteMask, MemoryEventType::GLOBAL_TO_VGPR);
+      waves_[wave]->checkVgprWrite(vgprBase + i, exec, byteMask, completionOrder);
     }
     waves_[wave]->registerEvent(pc_++, MemoryEventType::GLOBAL_TO_VGPR, std::move(regs), exec,
-                                byteMask);
+                                byteMask, completionOrder);
   }
 
   /// Register a Direct-to-LDS global load (tracked by vmcnt).
@@ -51,9 +55,12 @@ public:
     if (!exec) {
       exec = defaultExec_;
     }
+    constexpr auto completionOrder = MemoryCompletionOrder::VMEM;
+    waves_[wave]->prepareForMemoryEvent(completionOrder);
     ldsAddrs.resize(waveSize_, 0);
     waves_[wave]->registerLdsEvent(pc_++, MemoryEventType::GLOBAL_TO_LDS,
-                                   /*registers=*/{}, exec, waveSize_, ldsAddrs, bytesPerLane);
+                                   /*registers=*/{}, exec, waveSize_, ldsAddrs, bytesPerLane,
+                                   /*byteMask=*/0xF, completionOrder);
   }
 
   /// Register a global store from VGPRs (tracked by vmcnt).
@@ -62,8 +69,10 @@ public:
     if (!exec) {
       exec = defaultExec_;
     }
+    constexpr auto completionOrder = MemoryCompletionOrder::VMEM;
+    waves_[wave]->prepareForMemoryEvent(completionOrder);
     waves_[wave]->registerEvent(pc_++, MemoryEventType::VGPR_TO_GLOBAL,
-                                /*registers=*/{}, exec);
+                                /*registers=*/{}, exec, /*byteMask=*/0xF, completionOrder);
   }
 
   /// Register a scalar load into SGPRs (tracked by lgkmcnt).
@@ -76,17 +85,26 @@ public:
                                 defaultExec_);
   }
 
+  /// Apply the issue-time backpressure for a memory operation before checking
+  /// any of that operation's register or LDS accesses.
+  void prepareMemoryEvent(int wave, MemoryCompletionOrder completionOrder) {
+    waves_[wave]->prepareForMemoryEvent(completionOrder);
+  }
+
   /// Register an LDS write and validate against outstanding reads.
   void ldsWrite(int wave, int lane, int addr, int bytes, uint64_t exec = 0) {
     if (!exec) {
       exec = defaultExec_;
     }
+    constexpr auto completionOrder = MemoryCompletionOrder::LDS;
+    waves_[wave]->prepareForMemoryEvent(completionOrder);
     detector_->validateWrite(addr, WaveId{wave}, lane, bytes);
     std::vector<uint32_t> ldsAddrs(waveSize_, 0);
     ldsAddrs[lane] = addr;
     uint64_t laneMask = 1ULL << lane;
     waves_[wave]->registerLdsEvent(pc_++, MemoryEventType::VGPR_TO_LDS,
-                                   /*registers=*/{}, laneMask, waveSize_, ldsAddrs, bytes);
+                                   /*registers=*/{}, laneMask, waveSize_, ldsAddrs, bytes,
+                                   /*byteMask=*/0xF, completionOrder);
   }
 
   /// Register an LDS read and validate against outstanding writes.
@@ -97,14 +115,16 @@ public:
     if (!exec) {
       exec = defaultExec_;
     }
+    constexpr auto completionOrder = MemoryCompletionOrder::LDS;
+    waves_[wave]->prepareForMemoryEvent(completionOrder);
     detector_->validateRead(addr, WaveId{wave}, lane, bytes);
     std::vector<uint32_t> ldsAddrs(waveSize_, 0);
     ldsAddrs[lane] = addr;
     uint64_t laneMask = 1ULL << lane;
     std::vector<uint32_t> regs = {static_cast<uint32_t>(vgprDst)};
-    waves_[wave]->checkVgprWrite(vgprDst, laneMask, byteMask, MemoryEventType::LDS_TO_VGPR);
+    waves_[wave]->checkVgprWrite(vgprDst, laneMask, byteMask, completionOrder);
     waves_[wave]->registerLdsEvent(pc_++, MemoryEventType::LDS_TO_VGPR, std::move(regs), laneMask,
-                                   waveSize_, ldsAddrs, bytes, byteMask);
+                                   waveSize_, ldsAddrs, bytes, byteMask, completionOrder);
   }
 
   // -- Sync --

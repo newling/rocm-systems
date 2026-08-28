@@ -16,6 +16,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <unordered_map>
 
@@ -45,6 +46,17 @@ template <typename T, size_t N> struct RingBuffer {
 
 /// Return the memory instruction recorded as the exact conflict.
 MarkedPc findConflict(const RaceViolation &, RaceDetector &);
+
+/// Classify an instruction for ordered wait-counter completion tracking.
+MemoryCompletionOrder memoryCompletionOrderForRaceDetector(const Instruction &, rj_code_arch_t);
+
+/// Select the legacy wait-counter fields explicitly encoded by an instruction.
+/// The standalone vmcnt/lgkmcnt forms are GFX10/GFX11 instructions; gfx9 uses
+/// the combined form, while gfx12 has distinct split-counter instructions.
+/// Other s_waitcnt-prefixed instructions, such as s_waitcnt_depctr and
+/// s_waitcnt_vscnt, do not alter these VM/LGKM event queues.
+std::optional<PendingWaitCount> waitCountForRaceDetector(std::string_view mnemonic, int vmcnt,
+                                                         int lgkmcnt);
 
 /// Format a trace with ==> markers and wave/lane annotations.
 std::string formatTrace(const RingBuffer<uint64_t, 256> &trace,

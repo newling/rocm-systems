@@ -23,9 +23,74 @@
 //   DualOffset_*    — dual-offset LDS events
 
 #include "race_test_builder.h"
+#include "rocjitsu/isa/instruction.h"
+#include "rocjitsu/vm/plugins/race_detector/plugin.h"
 #include <gtest/gtest.h>
 
 using namespace rocjitsu::plugins::race_detector;
+
+namespace {
+class MemoryInstructionForRaceTest : public rocjitsu::Instruction {
+public:
+  explicit MemoryInstructionForRaceTest(std::string_view mnemonic, bool gds = false)
+      : Instruction(mnemonic, nullptr), gds_(gds) {
+    flags_ |= rocjitsu::MEMORY_OP;
+  }
+
+protected:
+  void build_modifiers(std::string &out) const override {
+    if (gds_)
+      out += " gds";
+  }
+
+private:
+  bool gds_;
+};
+} // namespace
+
+TEST(RaceDetectorPlugin, KeepsCompletionOrderSeparateFromWaitCounterDomain) {
+  MemoryInstructionForRaceTest bufferLoad("buffer_load_dword");
+  MemoryInstructionForRaceTest bufferStore("buffer_store_dword");
+  MemoryInstructionForRaceTest flatLoad("flat_load_dword");
+  MemoryInstructionForRaceTest ldsRead("ds_read_b32");
+  MemoryInstructionForRaceTest gdsRead("ds_read_b32", /*gds=*/true);
+  MemoryInstructionForRaceTest scalarLoad("s_load_dword");
+
+  EXPECT_EQ(memoryCompletionOrderForRaceDetector(bufferLoad, ROCJITSU_CODE_ARCH_CDNA4),
+            MemoryCompletionOrder::VMEM);
+  EXPECT_EQ(memoryCompletionOrderForRaceDetector(bufferStore, ROCJITSU_CODE_ARCH_CDNA4),
+            MemoryCompletionOrder::VMEM);
+  EXPECT_EQ(memoryCompletionOrderForRaceDetector(bufferStore, ROCJITSU_CODE_ARCH_RDNA3),
+            MemoryCompletionOrder::UNORDERED);
+  EXPECT_EQ(memoryCompletionOrderForRaceDetector(flatLoad, ROCJITSU_CODE_ARCH_CDNA4),
+            MemoryCompletionOrder::UNORDERED);
+  EXPECT_EQ(memoryCompletionOrderForRaceDetector(ldsRead, ROCJITSU_CODE_ARCH_CDNA4),
+            MemoryCompletionOrder::LDS);
+  EXPECT_EQ(memoryCompletionOrderForRaceDetector(gdsRead, ROCJITSU_CODE_ARCH_CDNA4),
+            MemoryCompletionOrder::UNORDERED);
+  EXPECT_EQ(memoryCompletionOrderForRaceDetector(scalarLoad, ROCJITSU_CODE_ARCH_CDNA4),
+            MemoryCompletionOrder::UNORDERED);
+}
+
+TEST(RaceDetectorPlugin, SelectsOnlyExplicitLegacyWaitFields) {
+  const auto combined = waitCountForRaceDetector("s_waitcnt", 7, 3);
+  ASSERT_TRUE(combined);
+  EXPECT_EQ(combined->vmcnt, 7);
+  EXPECT_EQ(combined->lgkmcnt, 3);
+
+  const auto vmOnly = waitCountForRaceDetector("s_waitcnt_vmcnt", 5, 9);
+  ASSERT_TRUE(vmOnly);
+  EXPECT_EQ(vmOnly->vmcnt, 5);
+  EXPECT_EQ(vmOnly->lgkmcnt, -1);
+
+  const auto lgkmOnly = waitCountForRaceDetector("s_waitcnt_lgkmcnt", 11, 2);
+  ASSERT_TRUE(lgkmOnly);
+  EXPECT_EQ(lgkmOnly->vmcnt, -1);
+  EXPECT_EQ(lgkmOnly->lgkmcnt, 2);
+
+  EXPECT_FALSE(waitCountForRaceDetector("s_waitcnt_depctr", 0, 0));
+  EXPECT_FALSE(waitCountForRaceDetector("s_waitcnt_vscnt", 0, 0));
+}
 
 // ---- VGPR races (vmcnt) ----
 
@@ -75,14 +140,16 @@ TEST(RaceDetector, Sgpr_WithWaitcnt) {
   EXPECT_FALSE(b.hasRace());
 }
 
-TEST(RaceDetector, Sgpr_PartialWaitcnt) {
+TEST(RaceDetector, Sgpr_PartialWaitcntDoesNotSelectOutOfOrderResult) {
   RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/8, /*sgprs=*/8);
   b.scalarLoad(/*wave=*/0, /*sgprBase=*/4, /*numRegs=*/1); // oldest
   b.scalarLoad(/*wave=*/0, /*sgprBase=*/5, /*numRegs=*/1); // newest
-  b.waitcnt(/*wave=*/0, /*vmcnt=*/-1, /*lgkmcnt=*/1);      // drain oldest (s4)
-  b.checkSgprRead(/*wave=*/0, /*reg=*/4);                  // safe
-  EXPECT_FALSE(b.hasSgprRace(4));
-  b.checkSgprRead(/*wave=*/0, /*reg=*/5); // RACE
+  b.waitcnt(/*wave=*/0, /*vmcnt=*/-1, /*lgkmcnt=*/1);
+  // Scalar-memory results can return out of order. The wait proves that one
+  // result completed, but not which one, so either SGPR may still be pending.
+  b.checkSgprRead(/*wave=*/0, /*reg=*/4);
+  EXPECT_TRUE(b.hasSgprRace(4));
+  b.checkSgprRead(/*wave=*/0, /*reg=*/5);
   EXPECT_TRUE(b.hasSgprRace(5));
 }
 
@@ -269,6 +336,24 @@ TEST(RaceDetector, VgprWaw_SameCompletionDomainIsOrdered) {
   EXPECT_FALSE(b.hasRace());
 }
 
+TEST(RaceDetector, VgprWaw_FlatLikeThenVmemLoadIsNotOrdered) {
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/8, /*sgprs=*/8);
+  b.globalLoad(/*wave=*/0, /*vgprBase=*/2, /*numRegs=*/1, /*exec=*/0,
+               /*byteMask=*/0xF, MemoryCompletionOrder::UNORDERED);
+  b.globalLoad(/*wave=*/0, /*vgprBase=*/2, /*numRegs=*/1);
+
+  EXPECT_TRUE(b.hasVgprRace(2));
+}
+
+TEST(RaceDetector, VgprWaw_VmemThenFlatLikeLoadIsNotOrdered) {
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/8, /*sgprs=*/8);
+  b.globalLoad(/*wave=*/0, /*vgprBase=*/2, /*numRegs=*/1);
+  b.globalLoad(/*wave=*/0, /*vgprBase=*/2, /*numRegs=*/1, /*exec=*/0,
+               /*byteMask=*/0xF, MemoryCompletionOrder::UNORDERED);
+
+  EXPECT_TRUE(b.hasVgprRace(2));
+}
+
 TEST(RaceDetector, VgprWaw_WaitClearsCrossDomainRace) {
   RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/8, /*sgprs=*/8);
   b.globalLoad(/*wave=*/0, /*vgprBase=*/2, /*numRegs=*/1);
@@ -412,6 +497,259 @@ TEST(RaceDetector, DeepStack_FullWaitcnt) {
   b.checkVgprRead(/*wave=*/0, /*reg=*/1, /*lane=*/0);
   b.checkVgprRead(/*wave=*/0, /*reg=*/2, /*lane=*/0);
   EXPECT_FALSE(b.hasRace());
+}
+
+TEST(RaceDetector, DeepStack_SaturatedLgkmcntDoesNotRetireEventsBelowCapacity) {
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/24, /*sgprs=*/8);
+  for (int reg = 0; reg < 10; ++reg)
+    b.ldsRead(/*wave=*/0, /*lane=*/0, /*addr=*/reg * 4, /*bytes=*/4,
+              /*vgprDst=*/reg);
+
+  b.waitcnt(/*wave=*/0, /*vmcnt=*/-1, /*lgkmcnt=*/15);
+  b.checkVgprRead(/*wave=*/0, /*reg=*/2, /*lane=*/0);
+  EXPECT_TRUE(b.hasVgprRace(2));
+}
+
+TEST(RaceDetector, DeepStack_LgkmcntNoWaitDoesNotTrimSyntheticOverflow) {
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/24, /*sgprs=*/8, /*waveSize=*/64,
+                    /*wgId=*/Dim3d(0), /*modelOrderedCounterBackpressure=*/false);
+  for (int reg = 0; reg < 20; ++reg)
+    b.ldsRead(/*wave=*/0, /*lane=*/0, /*addr=*/reg * 4, /*bytes=*/4,
+              /*vgprDst=*/reg);
+
+  b.waitcnt(/*wave=*/0, /*vmcnt=*/-1, /*lgkmcnt=*/15);
+  b.checkVgprRead(/*wave=*/0, /*reg=*/0, /*lane=*/0);
+  EXPECT_TRUE(b.hasVgprRace(0));
+}
+
+TEST(RaceDetector, DeepStack_LgkmcntCapacityRetiresOldestOrderedEvents) {
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/24, /*sgprs=*/8);
+  for (int reg = 0; reg < 20; ++reg)
+    b.ldsRead(/*wave=*/0, /*lane=*/0, /*addr=*/reg * 4, /*bytes=*/4,
+              /*vgprDst=*/reg);
+
+  b.checkVgprRead(/*wave=*/0, /*reg=*/2, /*lane=*/0);
+  EXPECT_FALSE(b.hasRace());
+  b.checkVgprRead(/*wave=*/0, /*reg=*/19, /*lane=*/0);
+  EXPECT_TRUE(b.hasVgprRace(19));
+}
+
+TEST(RaceDetector, DeepStack_LgkmcntCapacityRetiresBeforeCurrentOperandRead) {
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/24, /*sgprs=*/8);
+  for (int reg = 0; reg < 15; ++reg)
+    b.ldsRead(/*wave=*/0, /*lane=*/0, /*addr=*/reg * 4, /*bytes=*/4,
+              /*vgprDst=*/reg);
+
+  b.prepareMemoryEvent(/*wave=*/0, MemoryCompletionOrder::LDS);
+  b.checkVgprRead(/*wave=*/0, /*reg=*/0, /*lane=*/0);
+  EXPECT_FALSE(b.hasVgprRace(0));
+}
+
+TEST(RaceDetector, DeepStack_LgkmcntBelowCapacityStillReportsCurrentOperandRead) {
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/24, /*sgprs=*/8);
+  for (int reg = 0; reg < 14; ++reg)
+    b.ldsRead(/*wave=*/0, /*lane=*/0, /*addr=*/reg * 4, /*bytes=*/4,
+              /*vgprDst=*/reg);
+
+  b.prepareMemoryEvent(/*wave=*/0, MemoryCompletionOrder::LDS);
+  b.checkVgprRead(/*wave=*/0, /*reg=*/0, /*lane=*/0);
+  EXPECT_TRUE(b.hasVgprRace(0));
+}
+
+TEST(RaceDetector, DeepStack_LgkmcntCapacityDoesNotOrderScalarLoad) {
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/24, /*sgprs=*/8);
+  b.scalarLoad(/*wave=*/0, /*sgprBase=*/0, /*numRegs=*/1);
+  for (int reg = 0; reg < 15; ++reg)
+    b.ldsRead(/*wave=*/0, /*lane=*/0, /*addr=*/reg * 4, /*bytes=*/4,
+              /*vgprDst=*/reg);
+
+  b.checkSgprRead(/*wave=*/0, /*reg=*/0);
+  EXPECT_TRUE(b.hasSgprRace(0));
+}
+
+TEST(RaceDetector, DeepStack_MixedLgkmCapacityDoesNotGuessWhichEventCompleted) {
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/24, /*sgprs=*/8);
+  b.ldsRead(/*wave=*/0, /*lane=*/0, /*addr=*/0, /*bytes=*/4,
+            /*vgprDst=*/0);
+  for (int reg = 1; reg < 14; ++reg)
+    b.ldsRead(/*wave=*/0, /*lane=*/0, /*addr=*/reg * 4, /*bytes=*/4,
+              /*vgprDst=*/reg);
+  b.scalarLoad(/*wave=*/0, /*sgprBase=*/0, /*numRegs=*/1);
+  b.scalarLoad(/*wave=*/0, /*sgprBase=*/1, /*numRegs=*/1);
+
+  // The second scalar load must make room on the shared 15-entry LGKMCNT, but
+  // the completed event could be the first scalar load. It does not prove
+  // that the oldest LDS read completed.
+  b.checkVgprRead(/*wave=*/0, /*reg=*/0, /*lane=*/0);
+  EXPECT_TRUE(b.hasVgprRace(0));
+}
+
+TEST(RaceDetector, DeepStack_PartialLgkmcntRetiresOnlyProvablyOrderedExcess) {
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/24, /*sgprs=*/8);
+  for (int reg = 0; reg < 15; ++reg)
+    b.ldsRead(/*wave=*/0, /*lane=*/0, /*addr=*/reg * 4, /*bytes=*/4,
+              /*vgprDst=*/reg);
+  b.scalarLoad(/*wave=*/0, /*sgprBase=*/0, /*numRegs=*/1);
+
+  b.waitcnt(/*wave=*/0, /*vmcnt=*/-1, /*lgkmcnt=*/14);
+  b.checkVgprRead(/*wave=*/0, /*reg=*/0, /*lane=*/0);
+  EXPECT_FALSE(b.hasVgprRace(0));
+  b.checkSgprRead(/*wave=*/0, /*reg=*/0);
+  EXPECT_TRUE(b.hasSgprRace(0));
+}
+
+TEST(RaceDetector, DeepStack_PartialLgkmcntPreservesAmbiguousEventsWithinLimit) {
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/24, /*sgprs=*/8);
+  for (int reg = 0; reg < 14; ++reg)
+    b.ldsRead(/*wave=*/0, /*lane=*/0, /*addr=*/reg * 4, /*bytes=*/4,
+              /*vgprDst=*/reg);
+  b.scalarLoad(/*wave=*/0, /*sgprBase=*/0, /*numRegs=*/1);
+
+  b.waitcnt(/*wave=*/0, /*vmcnt=*/-1, /*lgkmcnt=*/14);
+  b.checkVgprRead(/*wave=*/0, /*reg=*/0, /*lane=*/0);
+  EXPECT_TRUE(b.hasVgprRace(0));
+  b.checkSgprRead(/*wave=*/0, /*reg=*/0);
+  EXPECT_TRUE(b.hasSgprRace(0));
+}
+
+TEST(RaceDetector, DeepStack_LgkmcntBelowSaturationRetiresOldestEvents) {
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/24, /*sgprs=*/8);
+  for (int reg = 0; reg < 20; ++reg)
+    b.ldsRead(/*wave=*/0, /*lane=*/0, /*addr=*/reg * 4, /*bytes=*/4,
+              /*vgprDst=*/reg);
+
+  b.waitcnt(/*wave=*/0, /*vmcnt=*/-1, /*lgkmcnt=*/14);
+  b.checkVgprRead(/*wave=*/0, /*reg=*/2, /*lane=*/0);
+  EXPECT_FALSE(b.hasVgprRace(2));
+  b.checkVgprRead(/*wave=*/0, /*reg=*/19, /*lane=*/0);
+  EXPECT_TRUE(b.hasVgprRace(19));
+}
+
+TEST(RaceDetector, DeepStack_SaturatedVmcntDoesNotRetireEventsBelowCapacity) {
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/72, /*sgprs=*/8);
+  for (int reg = 0; reg < 20; ++reg)
+    b.globalLoad(/*wave=*/0, /*vgprBase=*/reg, /*numRegs=*/1);
+
+  b.waitcnt(/*wave=*/0, /*vmcnt=*/63, /*lgkmcnt=*/-1);
+  b.checkVgprRead(/*wave=*/0, /*reg=*/2, /*lane=*/0);
+  EXPECT_TRUE(b.hasVgprRace(2));
+}
+
+TEST(RaceDetector, DeepStack_VmcntNoWaitDoesNotTrimSyntheticOverflow) {
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/72, /*sgprs=*/8, /*waveSize=*/64,
+                    /*wgId=*/Dim3d(0), /*modelOrderedCounterBackpressure=*/false);
+  for (int reg = 0; reg < 70; ++reg)
+    b.globalLoad(/*wave=*/0, /*vgprBase=*/reg, /*numRegs=*/1);
+
+  b.waitcnt(/*wave=*/0, /*vmcnt=*/63, /*lgkmcnt=*/-1);
+  b.checkVgprRead(/*wave=*/0, /*reg=*/0, /*lane=*/0);
+  EXPECT_TRUE(b.hasVgprRace(0));
+}
+
+TEST(RaceDetector, DeepStack_VmcntCapacityRetiresOldestOrderedEvents) {
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/72, /*sgprs=*/8);
+  for (int reg = 0; reg < 70; ++reg)
+    b.globalLoad(/*wave=*/0, /*vgprBase=*/reg, /*numRegs=*/1);
+
+  b.checkVgprRead(/*wave=*/0, /*reg=*/2, /*lane=*/0);
+  EXPECT_FALSE(b.hasRace());
+  b.checkVgprRead(/*wave=*/0, /*reg=*/69, /*lane=*/0);
+  EXPECT_TRUE(b.hasVgprRace(69));
+}
+
+TEST(RaceDetector, DeepStack_LegacyVmemStoresAdvanceVmcntCapacity) {
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/8, /*sgprs=*/8);
+  b.globalLoad(/*wave=*/0, /*vgprBase=*/0, /*numRegs=*/1);
+  for (int i = 0; i < 63; ++i)
+    b.globalStore(/*wave=*/0);
+
+  b.checkVgprRead(/*wave=*/0, /*reg=*/0, /*lane=*/0);
+  EXPECT_FALSE(b.hasVgprRace(0));
+}
+
+TEST(RaceDetector, DeepStack_LegacyVmemLoadRemainsPendingBeforeStoreCapacity) {
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/8, /*sgprs=*/8);
+  b.globalLoad(/*wave=*/0, /*vgprBase=*/0, /*numRegs=*/1);
+  for (int i = 0; i < 62; ++i)
+    b.globalStore(/*wave=*/0);
+
+  b.checkVgprRead(/*wave=*/0, /*reg=*/0, /*lane=*/0);
+  EXPECT_TRUE(b.hasVgprRace(0));
+}
+
+TEST(RaceDetector, DeepStack_VmcntCapacityRetiresBeforeCurrentOperandRead) {
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/72, /*sgprs=*/8);
+  for (int reg = 0; reg < 63; ++reg)
+    b.globalLoad(/*wave=*/0, /*vgprBase=*/reg, /*numRegs=*/1);
+
+  b.prepareMemoryEvent(/*wave=*/0, MemoryCompletionOrder::VMEM);
+  b.checkVgprRead(/*wave=*/0, /*reg=*/0, /*lane=*/0);
+  EXPECT_FALSE(b.hasVgprRace(0));
+}
+
+TEST(RaceDetector, DeepStack_VmcntBelowCapacityStillReportsCurrentOperandRead) {
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/72, /*sgprs=*/8);
+  for (int reg = 0; reg < 62; ++reg)
+    b.globalLoad(/*wave=*/0, /*vgprBase=*/reg, /*numRegs=*/1);
+
+  b.prepareMemoryEvent(/*wave=*/0, MemoryCompletionOrder::VMEM);
+  b.checkVgprRead(/*wave=*/0, /*reg=*/0, /*lane=*/0);
+  EXPECT_TRUE(b.hasVgprRace(0));
+}
+
+TEST(RaceDetector, DeepStack_VmcntCapacityDoesNotOrderFlatLikeLoad) {
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/72, /*sgprs=*/8);
+  b.globalLoad(/*wave=*/0, /*vgprBase=*/0, /*numRegs=*/1, /*exec=*/0,
+               /*byteMask=*/0xF, MemoryCompletionOrder::UNORDERED);
+  for (int reg = 1; reg <= 63; ++reg)
+    b.globalLoad(/*wave=*/0, /*vgprBase=*/reg, /*numRegs=*/1);
+
+  b.checkVgprRead(/*wave=*/0, /*reg=*/0, /*lane=*/0);
+  EXPECT_TRUE(b.hasVgprRace(0));
+}
+
+TEST(RaceDetector, DeepStack_FlatLikeLoadsDoNotAdvanceOrderedVmcntCapacity) {
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/72, /*sgprs=*/8);
+  b.globalLoad(/*wave=*/0, /*vgprBase=*/0, /*numRegs=*/1);
+  for (int reg = 1; reg <= 63; ++reg) {
+    b.globalLoad(/*wave=*/0, /*vgprBase=*/reg, /*numRegs=*/1, /*exec=*/0,
+                 /*byteMask=*/0xF, MemoryCompletionOrder::UNORDERED);
+  }
+
+  b.checkVgprRead(/*wave=*/0, /*reg=*/0, /*lane=*/0);
+  EXPECT_TRUE(b.hasVgprRace(0));
+}
+
+TEST(RaceDetector, DeepStack_VmcntCapacityCompletesDirectToLdsForOwningWave) {
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/72, /*sgprs=*/8);
+  b.globalToLds(/*wave=*/0, /*ldsAddrs=*/{0}, /*bytesPerLane=*/4, /*exec=*/1);
+  for (int reg = 0; reg < 63; ++reg)
+    b.globalLoad(/*wave=*/0, /*vgprBase=*/reg, /*numRegs=*/1);
+
+  b.checkLdsRead(/*wave=*/0, /*lane=*/0, /*addr=*/0, /*bytes=*/4);
+  EXPECT_FALSE(b.hasLdsRace(0));
+}
+
+TEST(RaceDetector, DeepStack_DirectToLdsRemainsPendingBelowVmcntCapacity) {
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/72, /*sgprs=*/8);
+  b.globalToLds(/*wave=*/0, /*ldsAddrs=*/{0}, /*bytesPerLane=*/4, /*exec=*/1);
+  for (int reg = 0; reg < 62; ++reg)
+    b.globalLoad(/*wave=*/0, /*vgprBase=*/reg, /*numRegs=*/1);
+
+  b.checkLdsRead(/*wave=*/0, /*lane=*/0, /*addr=*/0, /*bytes=*/4);
+  EXPECT_TRUE(b.hasLdsRace(0));
+}
+
+TEST(RaceDetector, DeepStack_VmcntBelowSaturationRetiresOldestEvents) {
+  RaceTestBuilder b(/*numWaves=*/1, /*vgprs=*/72, /*sgprs=*/8);
+  for (int reg = 0; reg < 70; ++reg)
+    b.globalLoad(/*wave=*/0, /*vgprBase=*/reg, /*numRegs=*/1);
+
+  b.waitcnt(/*wave=*/0, /*vmcnt=*/62, /*lgkmcnt=*/-1);
+  b.checkVgprRead(/*wave=*/0, /*reg=*/2, /*lane=*/0);
+  EXPECT_FALSE(b.hasVgprRace(2));
+  b.checkVgprRead(/*wave=*/0, /*reg=*/69, /*lane=*/0);
+  EXPECT_TRUE(b.hasVgprRace(69));
 }
 
 TEST(RaceDetector, DeepStack_ConsecutiveWaitcnts) {
