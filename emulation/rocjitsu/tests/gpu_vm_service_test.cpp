@@ -1056,6 +1056,102 @@ TEST(GpuVmService, GenerationsShareFaultReporterWithoutCopyingItsTarget) {
   EXPECT_EQ(copies, 0u);
 }
 
+TEST(GpuVmService, FaultReporterSerializesDistinctSnapshotsAndGenerations) {
+  class Reporter {
+  public:
+    Reporter(std::atomic<bool> &overlapped, std::atomic<unsigned> &calls)
+        : overlapped_(overlapped), calls_(calls) {}
+    Reporter(const Reporter &other) : overlapped_(other.overlapped_), calls_(other.calls_) {}
+
+    void operator()(uint64_t, VmAccessKind) {
+      if (active_.fetch_add(1) != 0)
+        overlapped_ = true;
+      std::this_thread::yield();
+      ++calls_;
+      --active_;
+    }
+
+  private:
+    // This state belongs to the callable itself, unlike the shared observations.
+    // Copying a callable gives each snapshot its own state; sharing it requires
+    // serialization before invoking a potentially mutable target.
+    std::atomic<unsigned> active_{0};
+    std::atomic<bool> &overlapped_;
+    std::atomic<unsigned> &calls_;
+  };
+
+  for (bool routed : {false, true}) {
+    SCOPED_TRACE(routed);
+    GpuVm vm;
+    auto backing = std::make_shared<ByteAddressSpace>(0x11);
+    std::atomic<bool> overlapped{false};
+    std::atomic<unsigned> calls{0};
+    const auto handle =
+        routed
+            ? vm.register_address_space(7, backing, backing, Reporter(overlapped, calls))
+            : vm.register_unrouted_address_space(7, backing, backing, Reporter(overlapped, calls));
+    ASSERT_TRUE(handle);
+    auto first = vm.snapshot_pinned(handle);
+    auto second = vm.snapshot_pinned(handle);
+    ASSERT_TRUE(vm.replace_translated(handle, backing, backing));
+    auto third = vm.snapshot(handle);
+    auto fourth = vm.snapshot(handle);
+    ASSERT_TRUE(first && second && third && fourth);
+    std::array snapshots{*first, *second, *third, *fourth};
+    constexpr unsigned kIterations = 128;
+    std::barrier start(snapshots.size());
+    std::vector<std::jthread> threads;
+    for (unsigned index = 0; index < snapshots.size(); ++index) {
+      threads.emplace_back([&, index] {
+        std::array<std::byte, 1> bytes{};
+        for (unsigned iteration = 0; iteration < kIterations; ++iteration) {
+          start.arrive_and_wait();
+          const auto &snapshot = snapshots[index];
+          if (index == 0)
+            EXPECT_EQ(snapshot.probe(4096, 1, VmAccessKind::Read), VmAccessOutcome::Faulted);
+          else if (index == 1)
+            EXPECT_EQ(snapshot.read(4096, bytes), VmAccessOutcome::Faulted);
+          else if (index == 2)
+            EXPECT_EQ(snapshot.write(4096, bytes), VmAccessOutcome::Faulted);
+          else
+            EXPECT_EQ(snapshot.atomic_load(0, 3).outcome, VmAccessOutcome::Malformed);
+        }
+      });
+    }
+    threads.clear();
+    EXPECT_FALSE(overlapped);
+    EXPECT_EQ(calls, snapshots.size() * kIterations);
+  }
+}
+
+TEST(GpuVmService, FaultReporterAllowsNestedFaultsAndReleasesAfterException) {
+  GpuVm vm;
+  auto backing = std::make_shared<ByteAddressSpace>(0x11);
+  AddressSpaceHandle handle;
+  unsigned calls = 0;
+  handle = vm.register_address_space(7, backing, backing, [&](uint64_t address, VmAccessKind) {
+    ++calls;
+    if (address == 4096) {
+      auto nested = vm.snapshot_pinned(handle);
+      ASSERT_TRUE(nested);
+      EXPECT_EQ(nested->probe(4097, 1, VmAccessKind::Read), VmAccessOutcome::Faulted);
+    }
+    if (address == 4098)
+      throw std::runtime_error("fault reporter");
+  });
+  auto access = vm.snapshot(handle);
+  ASSERT_TRUE(access);
+  EXPECT_EQ(access->probe(4096, 1, VmAccessKind::Read), VmAccessOutcome::Faulted);
+  EXPECT_EQ(calls, 2u);
+  EXPECT_THROW((void)access->probe(4098, 1, VmAccessKind::Read), std::runtime_error);
+  EXPECT_EQ(calls, 3u);
+  // A different thread must be able to enter after the throwing callback.
+  std::jthread reader(
+      [&] { EXPECT_EQ(access->probe(4097, 1, VmAccessKind::Read), VmAccessOutcome::Faulted); });
+  reader.join();
+  EXPECT_EQ(calls, 4u);
+}
+
 TEST(GpuVmService, ConcurrentSnapshotsPreserveRootEpochAndRetirement) {
   GpuVm gpu_vm;
   const auto handle = register_byte_address_space(gpu_vm, 7, 1);

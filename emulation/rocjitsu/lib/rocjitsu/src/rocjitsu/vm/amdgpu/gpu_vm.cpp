@@ -21,7 +21,26 @@ namespace rocjitsu::amdgpu {
 
 class GpuVmAccessState {
 public:
-  using FaultReporter = std::function<void(uint64_t, VmAccessKind)>;
+  class FaultReporter {
+  public:
+    explicit FaultReporter(std::function<void(uint64_t, VmAccessKind)> callback)
+        : callback_(std::move(callback)) {}
+
+    explicit operator bool() const { return static_cast<bool>(callback_); }
+
+    void operator()(uint64_t address, VmAccessKind access) const {
+      // A const std::function can invoke a mutable target. Every generation
+      // shares this guard along with the target; a generation's shared access
+      // lease does not exclude other readers or pinned generations. Recursive
+      // acquisition preserves same-thread fault callback reentry.
+      std::lock_guard lock(mutex_);
+      callback_(address, access);
+    }
+
+  private:
+    const std::function<void(uint64_t, VmAccessKind)> callback_;
+    mutable std::recursive_mutex mutex_;
+  };
 
   GpuVmAccessState(std::shared_ptr<AddressSpaceTranslator> translator = {},
                    std::shared_ptr<PhysicalMemoryAccess> physical_memory = {},
@@ -116,10 +135,10 @@ Mtype gfx12_mtype(uint64_t entry) {
 }
 
 template <typename Span>
-VmAccessOutcome
-access_translated(const AddressSpaceTranslator &translator, PhysicalMemoryAccess &memory,
-                  uint64_t address, Span bytes, std::size_t &completed_bytes, VmAccessKind access,
-                  const std::function<void(uint64_t, VmAccessKind)> *fault_reporter = nullptr) {
+VmAccessOutcome access_translated(const AddressSpaceTranslator &translator,
+                                  PhysicalMemoryAccess &memory, uint64_t address, Span bytes,
+                                  std::size_t &completed_bytes, VmAccessKind access,
+                                  const GpuVmAccessState::FaultReporter *fault_reporter = nullptr) {
   if (completed_bytes > bytes.size())
     return VmAccessOutcome::Malformed;
   while (completed_bytes < bytes.size()) {

@@ -560,6 +560,11 @@ public:
   /// @details The VM retains the shared translator and backing in every access
   /// snapshot. @p legacy_cache_compatible describes cache-addressing behavior,
   /// not the frontend that supplied the binding.
+  /// The fault reporter is shared across snapshots and generations. Invocations
+  /// are serialized per registration, with same-thread callback reentry allowed.
+  /// A reporter must not wait for another thread to fault through the same
+  /// registration. Accesses can hold a revocation lease while reporting, so a
+  /// reporter must defer invalidating, replacing, or unregistering that binding.
   [[nodiscard]] AddressSpaceHandle
   register_address_space(uint32_t vmid, std::shared_ptr<AddressSpaceTranslator> translator,
                          std::shared_ptr<PhysicalMemoryAccess> physical_memory,
@@ -570,6 +575,7 @@ public:
   /// @details Internal model queues can retain and snapshot this explicit
   /// handle while a frontend-owned address space with the same numeric VMID
   /// remains discoverable through find_vmid() and snapshot_vmid().
+  /// The fault reporter follows the same contract as register_address_space().
   [[nodiscard]] AddressSpaceHandle
   register_unrouted_address_space(uint32_t vmid, std::shared_ptr<AddressSpaceTranslator> translator,
                                   std::shared_ptr<PhysicalMemoryAccess> physical_memory,
