@@ -341,10 +341,6 @@ void MemoryWaitScoreboard::check_instruction_pending(const Instruction &inst, Wa
     }
     if (!reg)
       return std::nullopt;
-    if (op.has_register_selector() && is_special_reg_class(reg->cls))
-      if (auto range = resolve_scalar_register_range(wf, op.encoding_value(),
-                                                     std::max(1, (op.size_bits() + 31) / 32)))
-        return range->register_ref();
     // Vector scalar results are wave masks. Their nominal 64-bit ISA operand
     // occupies only one scalar register in wave32, including explicit SDST.
     if (write && vector && !op.is_vgpr() && op.size_bits() == 64)

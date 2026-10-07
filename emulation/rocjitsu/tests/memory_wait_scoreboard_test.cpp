@@ -2994,6 +2994,61 @@ TEST(MemoryWaitFootprintTest, WaveMaskDestinationUsesWaveWidth) {
   }
 }
 
+TEST(MemoryWaitExecutionTest, ExplicitVccMaskDestinationUsesWaveWidth) {
+  for (auto arch : {ROCJITSU_CODE_ARCH_RDNA3, ROCJITSU_CODE_ARCH_RDNA4})
+    for (unsigned wave_size : {32u, 64u}) {
+      SCOPED_TRACE(arch);
+      SCOPED_TRACE(wave_size);
+      GpuMemory memory("vcc_mask_wait_memory");
+      L2Cache l2("vcc_mask_wait_l2");
+      ComputeUnitCore::Config config{};
+      config.memory_wait_diagnostics = MemoryWaitDiagnostics::Warn;
+      config.arch = arch;
+      config.num_wf_slots = 1;
+      config.sgprs_per_wf = 106;
+      config.vgprs_per_wf = 32;
+      auto cu = ComputeUnitCore::create("vcc_mask_wait_cu", config, &memory, &l2);
+      auto *wf = cu->dispatch_wf(0, 0x100, 106, 32, wave_size);
+      ASSERT_NE(wf, nullptr);
+      wf->set_exec(~uint64_t{0});
+      auto decoder = Decoder::create(arch);
+      const auto words =
+          arch == ROCJITSU_CODE_ARCH_RDNA3
+              ? rdna3::build_vop3(rdna3::kVCmpGtI32Vop3, {.vdst = 106, .src0 = 129, .src1 = 128})
+              : rdna4::build_vop3(rdna4::kVCmpGtI32Vop3, {.vdst = 106, .src0 = 129, .src1 = 128});
+      util::StringDiagnostic error;
+      auto consumer = decoder->decode_window(words, 0, error.emitter());
+      ASSERT_TRUE(consumer.succeeded()) << error.message();
+      auto &state = wf->ensure_memory_wait_scoreboard();
+      for (uint8_t half : {0, 1})
+        for (bool waited : {false, true}) {
+          SCOPED_TRACE(half);
+          SCOPED_TRACE(waited);
+          const auto producer_words =
+              arch == ROCJITSU_CODE_ARCH_RDNA3
+                  ? rdna3::build_smem(rdna3::kSLoadB32Smem,
+                                      {.sdata = static_cast<uint8_t>(106 + half), .soffset = 124})
+                  : rdna4::build_smem(rdna4::kSLoadB32Smem,
+                                      {.sdata = static_cast<uint8_t>(106 + half), .soffset = 124});
+          auto producer = decoder->decode_window(producer_words, 0, error.emitter());
+          ASSERT_TRUE(producer.succeeded()) << error.message();
+          state.clear();
+          cu->track_memory_wait(*producer.value(), *wf);
+          ASSERT_EQ(state.events().size(), 1u);
+          if (waited)
+            state.wait(state.events().front().counter, 0);
+          unsigned reports = 0;
+          state.bind(0x200, &reports,
+                     [](void *context, const auto &) { ++*static_cast<unsigned *>(context); });
+          wf->set_vcc_raw(0x5a5aa5a500000000ull);
+          state.check_instruction(*consumer.value(), *wf);
+          EXPECT_EQ(reports, !waited && (half == 0 || wave_size == 64) ? 1u : 0u);
+          ASSERT_TRUE(cu->execute_instruction(consumer.value().get(), *wf).succeeded());
+          EXPECT_EQ(wf->vcc(), wave_size == 32 ? 0x5a5aa5a5ffffffffull : ~uint64_t{0});
+        }
+    }
+}
+
 TEST(MemoryWaitFootprintTest, WaitImmediateIsNotAScalarRegister) {
   GpuMemory memory("immediate_wait_memory");
   L2Cache l2("immediate_wait_l2");
