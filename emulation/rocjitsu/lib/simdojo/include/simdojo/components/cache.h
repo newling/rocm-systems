@@ -221,6 +221,10 @@ public:
   ///
   /// @details Used by cache controllers that fill a newly allocated line
   /// directly from a backing level, avoiding a second tag scan in fill_line().
+  /// With LazyStorage, the first call allocates the tag and byte storage and so
+  /// can run the new_handler or throw std::bad_alloc, which construction does
+  /// for an eager cache. The failure precedes any change to residency: the cache
+  /// stays empty, every query reports a miss, and a later call may retry.
   Allocation allocate_with_data(uint64_t addr, uint32_t vmid = 0, CacheTag *evicted_tag = nullptr,
                                 uint8_t *evicted_data = nullptr) {
     // Complete deferred allocations before publishing a resident tag. A failing
