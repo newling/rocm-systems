@@ -710,6 +710,11 @@ public:
 
   /// @brief Set the execution state.
   /// @param s New execution state.
+  /// @details A change between HALTED and any other state updates the CU's
+  /// active wave count and its active-slot range, which the CU's per-step scans
+  /// rely on and which are unsynchronized. Such a change must run with the CU's
+  /// wave-state lock held (a step, ComputeUnitCore::with_wave_state_locked(), or
+  /// dispatch_wf_at(), which takes it internally).
   void set_state(WfState s) {
     const bool was_active = !is_halted();
     state_ = s;
@@ -970,6 +975,7 @@ public:
   /// two threads against each other.
   enum class CpCompletionNotice : uint8_t { Send, Suppress };
 
+  /// @note Requires the CU's wave-state lock; see @ref set_state.
   void halt(CpCompletionNotice notice = CpCompletionNotice::Send);
 
   /// @brief End program execution. If all memory ops are drained, halts
