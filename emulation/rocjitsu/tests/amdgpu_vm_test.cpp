@@ -5302,6 +5302,52 @@ TEST_P(WavefrontSlotTest, LowerBarrierWaiterResumesAfterSparseHigherSlotRetires)
   EXPECT_FALSE(cu->has_active_wfs());
 }
 
+TEST_P(WavefrontSlotTest, SlotRangeFollowsOutOfOrderRetirementAndRegrowth) {
+  const auto &[arch, wave_size] = GetParam();
+  constexpr uint32_t kSlots = 4;
+  VmFixture f(arch, 1, kSlots);
+  auto *cu = f.cu();
+  constexpr uint64_t kCode = 0x1000;
+  const std::array code = {
+      build_s_mov_b32(0, scalar_positive_inline_u32(1), cu->arch()),
+      build_s_mov_b32(0, scalar_positive_inline_u32(2), cu->arch()),
+      build_s_endpgm(cu->arch()),
+  };
+  f.mem()->load_image(reinterpret_cast<const uint8_t *>(code.data()), sizeof(code), kCode);
+
+  // Entering at different offsets makes the highest slot retire first while a
+  // hole (slot 1) separates the remaining waves.
+  auto *top = cu->dispatch_wf_at(3, 1, kCode + 8, 104, 256, wave_size);
+  auto *third = cu->dispatch_wf_at(2, 2, kCode + 4, 104, 256, wave_size);
+  auto *bottom = cu->dispatch_wf_at(0, 3, kCode, 104, 256, wave_size);
+  ASSERT_NE(top, nullptr);
+  ASSERT_NE(third, nullptr);
+  ASSERT_NE(bottom, nullptr);
+  ASSERT_TRUE(cu->step());
+  EXPECT_TRUE(top->is_halted());
+  EXPECT_EQ(third->pc, kCode + 8);
+  EXPECT_EQ(bottom->pc, kCode + 4);
+
+  // The range has shrunk below the retired top slot. A wave placed in the hole
+  // and another in the retired top slot must both be scanned again.
+  auto *hole = cu->dispatch_wf_at(1, 4, kCode, 104, 256, wave_size);
+  top = cu->dispatch_wf_at(3, 5, kCode, 104, 256, wave_size);
+  ASSERT_NE(hole, nullptr);
+  ASSERT_NE(top, nullptr);
+  ASSERT_TRUE(cu->step());
+  EXPECT_TRUE(third->is_halted());
+  EXPECT_EQ(bottom->debug_read_sgpr(0), 2u);
+  EXPECT_EQ(hole->debug_read_sgpr(0), 1u);
+  EXPECT_EQ(top->debug_read_sgpr(0), 1u);
+
+  ASSERT_TRUE(cu->step());
+  EXPECT_TRUE(bottom->is_halted());
+  EXPECT_EQ(hole->debug_read_sgpr(0), 2u);
+  EXPECT_EQ(top->debug_read_sgpr(0), 2u);
+  static_cast<void>(cu->step());
+  EXPECT_FALSE(cu->has_active_wfs());
+}
+
 INSTANTIATE_TEST_SUITE_P(Cdna, WavefrontSlotTest,
                          ::testing::Values(WavefrontSlotTestParam{"cdna3", 64},
                                            WavefrontSlotTestParam{"cdna4", 64},
