@@ -17,8 +17,11 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <ctime>
+#include <map>
 #include <memory>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -2018,4 +2021,110 @@ TEST(CacheVmidTest, LineDataForReadReturnsMatchingVmidData) {
   for (uint32_t i = 0; i < TestCache::LINE_SIZE; ++i)
     EXPECT_EQ(line[i], static_cast<uint8_t>(i ^ 0x5A));
   EXPECT_EQ(cache.line_data_for_read(kAddr, /*vmid=*/5), nullptr);
+}
+
+namespace {
+using EagerStoreCache = Cache<6, 8, 2>;
+using LazyStoreCache = Cache<6, 8, 2, LRUPolicy<8, 2>, /*LazyStorage=*/true>;
+
+template <typename C> std::map<uint64_t, std::vector<uint8_t>> dirty_lines(C &cache) {
+  std::map<uint64_t, std::vector<uint8_t>> lines;
+  cache.for_each_dirty([&](CacheTag &, uint64_t address, uint8_t *data) {
+    lines[address] = std::vector<uint8_t>(data, data + C::LINE_SIZE);
+  });
+  return lines;
+}
+} // namespace
+
+// A lazily backed cache is a storage optimization only. Drive it and an eager
+// cache with identical random operations, including full invalidation, copies and
+// moves, and require identical hits, evictions, line bytes and dirty lines.
+TEST(CacheLazyStorageTest, RandomOperationsMatchEagerCache) {
+  for (uint32_t seed = 0; seed < 100; ++seed) {
+    SCOPED_TRACE(seed);
+    std::mt19937 rng(seed);
+    EagerStoreCache eager;
+    LazyStoreCache lazy;
+    for (int step = 0; step < 300; ++step) {
+      const uint64_t address = (rng() % 64) * EagerStoreCache::LINE_SIZE;
+      const uint32_t vmid = rng() % 2;
+      switch (rng() % 11) {
+      case 0:
+      case 1: {
+        CacheTag eager_evicted, lazy_evicted;
+        uint8_t eager_bytes[EagerStoreCache::LINE_SIZE] = {};
+        uint8_t lazy_bytes[EagerStoreCache::LINE_SIZE] = {};
+        auto eager_line = eager.allocate_with_data(address, vmid, &eager_evicted, eager_bytes);
+        auto lazy_line = lazy.allocate_with_data(address, vmid, &lazy_evicted, lazy_bytes);
+        ASSERT_EQ(eager_evicted.valid, lazy_evicted.valid);
+        ASSERT_EQ(eager_evicted.tag, lazy_evicted.tag);
+        ASSERT_EQ(0, std::memcmp(eager_bytes, lazy_bytes, sizeof(eager_bytes)));
+        const uint8_t fill = static_cast<uint8_t>(rng());
+        std::memset(eager_line.data, fill, EagerStoreCache::LINE_SIZE);
+        std::memset(lazy_line.data, fill, EagerStoreCache::LINE_SIZE);
+        const bool dirty = rng() & 1;
+        eager_line.tag->dirty = dirty;
+        lazy_line.tag->dirty = dirty;
+        break;
+      }
+      case 2:
+        ASSERT_EQ(eager.lookup(address, nullptr, vmid), lazy.lookup(address, nullptr, vmid));
+        break;
+      case 3:
+        ASSERT_EQ(eager.peek(address, vmid) != nullptr, lazy.peek(address, vmid) != nullptr);
+        break;
+      case 4:
+        eager.invalidate(address, vmid);
+        lazy.invalidate(address, vmid);
+        break;
+      case 5:
+        eager.invalidate_all_vmids(address);
+        lazy.invalidate_all_vmids(address);
+        break;
+      case 6:
+        if (rng() % 8 == 0) {
+          eager.invalidate_all();
+          lazy.invalidate_all();
+        }
+        break;
+      case 7: {
+        const bool hit = eager.lookup(address, nullptr, vmid);
+        ASSERT_EQ(hit, lazy.lookup(address, nullptr, vmid));
+        if (hit) {
+          uint8_t eager_read[8], lazy_read[8];
+          eager.read_line(address, eager_read, 8, 8, vmid);
+          lazy.read_line(address, lazy_read, 8, 8, vmid);
+          ASSERT_EQ(0, std::memcmp(eager_read, lazy_read, sizeof(eager_read)));
+          const uint8_t source[8] = {1, 2, 3, 4, 5, 6, 7, static_cast<uint8_t>(step)};
+          eager.write_line(address, source, 8, 8, vmid);
+          lazy.write_line(address, source, 8, 8, vmid);
+        }
+        break;
+      }
+      case 8:
+        ASSERT_EQ(eager.line_data_for_read(address, vmid) != nullptr,
+                  lazy.line_data_for_read(address, vmid) != nullptr);
+        ASSERT_EQ(eager.line_data_for_write(address, vmid) != nullptr,
+                  lazy.line_data_for_write(address, vmid) != nullptr);
+        break;
+      case 9:
+        ASSERT_EQ(dirty_lines(eager), dirty_lines(lazy));
+        break;
+      default:
+        if (rng() % 4 == 0) {
+          EagerStoreCache eager_copy(eager);
+          LazyStoreCache lazy_copy(lazy);
+          ASSERT_EQ(dirty_lines(eager_copy), dirty_lines(lazy_copy));
+          LazyStoreCache assigned;
+          assigned = lazy;
+          assigned = lazy_copy;
+          ASSERT_EQ(dirty_lines(eager), dirty_lines(assigned));
+          lazy = std::move(assigned);
+          eager = std::move(eager_copy);
+        }
+        break;
+      }
+    }
+    ASSERT_EQ(dirty_lines(eager), dirty_lines(lazy));
+  }
 }
