@@ -56,8 +56,7 @@ TEST(Rdna4DotDppTest, DecodesHardwareQualifiedForms) {
     // v_dot* v16, v8, v9, v10 dpp8:[7,6,5,4,3,2,1,0] fi:1
     for (const bool dpp8 : {false, true}) {
       SCOPED_TRACE(dot.mnemonic);
-      const uint32_t words[] = {0xcc004010u | (dot.opcode << 16),
-                                dpp8 ? 0x1c2a12eau : 0x1c2a12fau,
+      const uint32_t words[] = {0xcc004010u | (dot.opcode << 16), dpp8 ? 0x1c2a12eau : 0x1c2a12fau,
                                 dpp8 ? 0x05397708u : 0x3d091108u};
       std::unique_ptr<Instruction> inst(decode_valid(*decoder, words));
       ASSERT_NE(inst, nullptr);
@@ -91,13 +90,12 @@ TEST(Rdna4DotDppTest, PermutesSourcesAndPreservesMaskedDestinations) {
         for (bool dpp8 : {false, true}) {
           for (bool fi : {false, true}) {
             for (uint64_t exec : {~0ull, 0xa55aa55a5aa55aa5ull}) {
-              SCOPED_TRACE(std::format("{} wave{} scalar={} dpp8={} fi={} exec={:x}",
-                                       dot.mnemonic, wave_size, force_scalar, dpp8, fi, exec));
+              SCOPED_TRACE(std::format("{} wave{} scalar={} dpp8={} fi={} exec={:x}", dot.mnemonic,
+                                       wave_size, force_scalar, dpp8, fi, exec));
               wf->set_exec(exec);
-              const uint32_t words[] = {
-                  0xcc004010u | (dot.opcode << 16),
-                  0x1c2a1200u | (dpp8 ? (fi ? 234u : 233u) : 250u),
-                  dpp8 ? 0x05397708u : (0x3d091108u | (uint32_t{fi} << 18))};
+              const uint32_t words[] = {0xcc004010u | (dot.opcode << 16),
+                                        0x1c2a1200u | (dpp8 ? (fi ? 234u : 233u) : 250u),
+                                        dpp8 ? 0x05397708u : (0x3d091108u | (uint32_t{fi} << 18))};
               std::unique_ptr<Instruction> permuted(decode_valid(*decoder, words));
               ASSERT_NE(permuted, nullptr);
               const uint32_t plain_words[] = {0xcc004011u | (dot.opcode << 16), 0x1c2a1308u};
@@ -115,17 +113,14 @@ TEST(Rdna4DotDppTest, PermutesSourcesAndPreservesMaskedDestinations) {
                 const uint32_t source = dpp8 ? (lane ^ 7u) : (lane ? lane - 1 : 0);
                 const bool in_range = dpp8 || lane % 16 != 0;
                 const bool read_source = in_range && (fi || (exec & (1ull << source)));
-                cu->write_vgpr(vb + 8, lane,
-                               read_source ? (source % 2 ? dot.two0 : dot.one0) : 0u);
+                cu->write_vgpr(vb + 8, lane, read_source ? (source % 2 ? dot.two0 : dot.one0) : 0u);
               }
               ASSERT_TRUE(cu->execute_instruction(plain.get(), *wf).succeeded());
               for (uint32_t lane = 0; lane < wave_size; ++lane) {
-                const bool row_bank = dpp8 ||
-                                      ((3u & (1u << (lane / 16))) &&
-                                       (13u & (1u << ((lane % 16) / 4))));
-                const uint32_t expected = (exec & (1ull << lane)) && row_bank
-                                              ? cu->read_vgpr(vb + 17, lane)
-                                              : sentinel;
+                const bool row_bank =
+                    dpp8 || ((3u & (1u << (lane / 16))) && (13u & (1u << ((lane % 16) / 4))));
+                const uint32_t expected =
+                    (exec & (1ull << lane)) && row_bank ? cu->read_vgpr(vb + 17, lane) : sentinel;
                 EXPECT_EQ(cu->read_vgpr(vb + 16, lane), expected) << "lane=" << lane;
               }
             }
