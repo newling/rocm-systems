@@ -132,4 +132,48 @@ TEST(Rdna4DotDppTest, PermutesSourcesAndPreservesMaskedDestinations) {
   }
 }
 
+TEST(Rdna4DotDppTest, FloatingDot4UsesEachOperandFormat) {
+  amdgpu::GpuMemory memory("dot4_format_memory");
+  amdgpu::L2Cache l2("dot4_format_l2");
+  amdgpu::ComputeUnitCore::Config cfg{};
+  cfg.arch = ROCJITSU_CODE_ARCH_RDNA4;
+  cfg.num_wf_slots = 1;
+  cfg.sgprs_per_wf = 106;
+  cfg.vgprs_per_wf = 32;
+  auto cu = amdgpu::ComputeUnitCore::create("dot4_format", cfg, &memory, &l2);
+  auto decoder = Decoder::create(cfg.arch);
+  auto *wf = cu->dispatch_wf(0, 0, cfg.sgprs_per_wf, cfg.vgprs_per_wf, 32);
+  ASSERT_NE(wf, nullptr);
+  wf->set_exec(0xffffffffu);
+  const auto vb = wf->vgpr_alloc().base;
+  for (bool force_scalar : {false, true}) {
+    ForceScalarGuard guard(force_scalar);
+    for (const auto &dot : kDots) {
+      if (dot.opcode == rdna4::kVDot2F32F16Vop3p || dot.opcode == rdna4::kVDot2F32Bf16Vop3p)
+        continue;
+      for (unsigned form = 0; form != 3; ++form) {
+        SCOPED_TRACE(std::format("{} form={} scalar={}", dot.mnemonic, form, force_scalar));
+        const uint32_t words[] = {0xcc004010u | (dot.opcode << 16),
+                                  form == 0 ? 0x1c2a1308u : (form == 1 ? 0x1c2a12fau : 0x1c2a12eau),
+                                  form == 1 ? 0xff091108u : 0x05397708u};
+        std::unique_ptr<Instruction> inst(decode_valid(*decoder, words));
+        ASSERT_NE(inst, nullptr);
+        for (uint32_t lane = 0; lane != 32; ++lane) {
+          // E4M3 0x38 and E5M2 0x3c both encode one. Four products plus 0.5 are 4.5.
+          cu->write_vgpr(vb + 8, lane, dot.one0 * 0x01010101u);
+          cu->write_vgpr(vb + 9, lane, dot.one1 * 0x01010101u);
+          cu->write_vgpr(vb + 10, lane, std::bit_cast<uint32_t>(0.5f));
+        }
+        ASSERT_TRUE(cu->execute_instruction(inst.get(), *wf).succeeded());
+        for (uint32_t lane = 0; lane != 32; ++lane) {
+          const float expected = form == 1 && lane % 16 == 0 ? 0.5f : 4.5f;
+          EXPECT_EQ(cu->read_vgpr(vb + 16, lane), std::bit_cast<uint32_t>(expected))
+              << "lane=" << lane;
+        }
+      }
+    }
+  }
+  wf->halt();
+}
+
 } // namespace
