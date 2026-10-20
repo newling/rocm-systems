@@ -104,9 +104,6 @@ from amdisa.codegen.execute.packed import (
     gen_pk_mov_b32,
     gen_mad_mix_f32,
     gen_mad_mix_lo_hi,
-    gen_dot2,
-    gen_dot4,
-    gen_dot8,
 )
 from amdisa.codegen.execute.matrix import (
     gen_accvgpr_read,
@@ -7798,31 +7795,7 @@ class CodeGenerator:
                 arch_name=self.isa_spec.arch_name,
             )
 
-        # ----- VOP3P: packed / dot / mix / MFMA -----
-        if cls.startswith('dot2_'):
-            return gen_dot2(
-                dst_ops,
-                src_ops,
-                cls,
-                opsel_exprs=self._vop3p_opsel_exprs(),
-                dot_accumulation=self.isa_spec.profile.float_dot_accumulation,
-            )
-
-        if cls.startswith('dot4_'):
-            return gen_dot4(
-                dst_ops,
-                src_ops,
-                cls,
-                operation=sem.operation,
-                dot_accumulation=self.isa_spec.profile.float_dot_accumulation,
-                opsel_exprs=self._vop3p_opsel_exprs(),
-            )
-
-        if cls.startswith('dot8_'):
-            return gen_dot8(
-                dst_ops, src_ops, cls, opsel_exprs=self._vop3p_opsel_exprs()
-            )
-
+        # ----- VOP3P: packed / mix / MFMA (DOT routes through DISPATCH) -----
         if cls == 'smem_load':
             return self._gen_smem_load(dst_ops, src_ops, sem)
 
