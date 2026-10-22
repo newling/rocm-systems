@@ -376,6 +376,37 @@ TEST(Gfx12Dot, AccumulateEncodingsAndInlineSources) {
     }
   }
 }
+
+TEST(Gfx12Dot, VopdBf16NegativeAccumulatorSubtractsFloorUnit) {
+  HostState restore;
+  DotMachine machine(ROCJITSU_CODE_ARCH_RDNA4);
+  // gfx1201 captures for both DOT2ACC slots. The negative subnormal C
+  // changes the last bit; either signed zero leaves it at 0x8bac50ec.
+  for (bool scalar : {false, true}) {
+    util::set_force_scalar_for_testing(scalar);
+    for (bool y_slot : {false, true}) {
+      const uint32_t dst = y_slot ? 17 : 16;
+      // Pair DOT2ACC v16/v17, v0, v1 with a zero MOV in the other slot.
+      const std::array<uint32_t, 2> words =
+          y_slot ? std::array{0xca1a0280u, 0x10100300u} : std::array{0xcb500300u, 0x10100280u};
+      for (uint32_t exec : {0xffffffffu, 0xa55a5aa5u}) {
+        machine.wave->set_exec(exec);
+        for (uint32_t c : {0x8014e243u, 0x80000000u, 0u}) {
+          for (uint32_t lane = 0; lane < 32; ++lane) {
+            machine.set(0, lane, 0x023a003au);
+            machine.set(1, lane, 0x4509cb3fu);
+            machine.set(dst, lane, c);
+          }
+          machine.execute(words);
+          for (uint32_t lane = 0; lane < 32; ++lane)
+            EXPECT_EQ(machine.get(dst, lane),
+                      (exec & (1u << lane)) ? (c == 0x8014e243u ? 0x8bac50edu : 0x8bac50ecu) : c)
+                << "scalar=" << scalar << " y_slot=" << y_slot << " lane=" << lane;
+        }
+      }
+    }
+  }
+}
 } // namespace
 
 // Pin the native eight-product contract independently of WMMA register layouts.
