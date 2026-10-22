@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "decode_test_util.h"
+#include "rocjitsu/isa/arch/amdgpu/generated/rdna4/builders.h"
 #include "rocjitsu/isa/arch/amdgpu/generated/rdna4/opcodes.h"
 #include "rocjitsu/isa/decoder.h"
 #include "rocjitsu/isa/instruction.h"
@@ -132,7 +133,7 @@ TEST(Rdna4DotDppTest, PermutesSourcesAndPreservesMaskedDestinations) {
   }
 }
 
-TEST(Rdna4DotDppTest, FloatingDot4UsesEachOperandFormat) {
+TEST(Rdna4DotDppTest, FloatingDot4FormatsAndAccumulatorModifiers) {
   amdgpu::GpuMemory memory("dot4_format_memory");
   amdgpu::L2Cache l2("dot4_format_l2");
   amdgpu::ComputeUnitCore::Config cfg{};
@@ -153,22 +154,37 @@ TEST(Rdna4DotDppTest, FloatingDot4UsesEachOperandFormat) {
         continue;
       for (unsigned form = 0; form != 3; ++form) {
         SCOPED_TRACE(std::format("{} form={} scalar={}", dot.mnemonic, form, force_scalar));
-        const uint32_t words[] = {0xcc004010u | (dot.opcode << 16),
-                                  form == 0 ? 0x1c2a1308u : (form == 1 ? 0x1c2a12fau : 0x1c2a12eau),
-                                  form == 1 ? 0xff091108u : 0x05397708u};
-        std::unique_ptr<Instruction> inst(decode_valid(*decoder, words));
-        ASSERT_NE(inst, nullptr);
-        for (uint32_t lane = 0; lane != 32; ++lane) {
-          // E4M3 0x38 and E5M2 0x3c both encode one. Four products plus 0.5 are 4.5.
-          cu->write_vgpr(vb + 8, lane, dot.one0 * 0x01010101u);
-          cu->write_vgpr(vb + 9, lane, dot.one1 * 0x01010101u);
-          cu->write_vgpr(vb + 10, lane, std::bit_cast<uint32_t>(0.5f));
-        }
-        ASSERT_TRUE(cu->execute_instruction(inst.get(), *wf).succeeded());
-        for (uint32_t lane = 0; lane != 32; ++lane) {
-          const float expected = form == 1 && lane % 16 == 0 ? 0.5f : 4.5f;
-          EXPECT_EQ(cu->read_vgpr(vb + 16, lane), std::bit_cast<uint32_t>(expected))
-              << "lane=" << lane;
+        for (uint8_t modifiers = 0; modifiers < 4; ++modifiers) {
+          SCOPED_TRACE(modifiers);
+          const auto base =
+              rdna4::build_vop3p(dot.opcode, {.vdst = 16,
+                                              .neg_hi = uint8_t((modifiers & 2) ? 4 : 0),
+                                              .opsel_hi_2 = 1,
+                                              .src0 = uint16_t(form == 0   ? 264
+                                                               : form == 1 ? 250
+                                                                           : 234),
+                                              .src1 = 265,
+                                              .src2 = 266,
+                                              .opsel_hi = 3,
+                                              .neg = uint8_t((modifiers & 1) ? 4 : 0)});
+          const uint32_t words[] = {base[0], base[1], form == 1 ? 0xff091108u : 0x05397708u};
+          std::unique_ptr<Instruction> inst(decode_valid(*decoder, words));
+          ASSERT_NE(inst, nullptr);
+          for (uint32_t lane = 0; lane != 32; ++lane) {
+            // E4M3 0x38 and E5M2 0x3c both encode one. Vary C's sign so
+            // the combined modifiers distinguish ABS before NEG.
+            cu->write_vgpr(vb + 8, lane, dot.one0 * 0x01010101u);
+            cu->write_vgpr(vb + 9, lane, dot.one1 * 0x01010101u);
+            cu->write_vgpr(vb + 10, lane, std::bit_cast<uint32_t>(lane % 2 ? -0.5f : 0.5f));
+          }
+          ASSERT_TRUE(cu->execute_instruction(inst.get(), *wf).succeeded());
+          for (uint32_t lane = 0; lane != 32; ++lane) {
+            const float magnitude = lane % 2 && !(modifiers & 2) ? -0.5f : 0.5f;
+            const float acc = modifiers & 1 ? -magnitude : magnitude;
+            const float expected = acc + (form == 1 && lane % 16 == 0 ? 0.0f : 4.0f);
+            EXPECT_EQ(cu->read_vgpr(vb + 16, lane), std::bit_cast<uint32_t>(expected))
+                << "lane=" << lane;
+          }
         }
       }
     }
