@@ -14,11 +14,19 @@
 namespace rocjitsu::plugins::race_detector {
 namespace {
 void appendLdsInterval(IntervalSet &intervals, uint32_t address, int bytes,
-                       const RaceDetector &detector, int elementBytes = 0) {
+                       const RaceDetector &detector, int elementBytes = 0,
+                       std::optional<uint64_t> allocationEnd = std::nullopt) {
   if (bytes <= 0 || elementBytes < 0)
     return;
   bytes = static_cast<int>(
       detector.ldsBytesInRange(address, bytes, elementBytes ? elementBytes : bytes));
+  if (allocationEnd) {
+    const uint64_t available = address < *allocationEnd ? *allocationEnd - address : 0;
+    const uint32_t element = elementBytes ? elementBytes : bytes;
+    if (element == 0)
+      return;
+    bytes = static_cast<int>(std::min<uint64_t>(bytes, available / element * element));
+  }
   // Intervals must fit the CU's logical LDS backing and the signed index type.
   // Rejected addresses retain their event's register/counter dependencies.
   if (bytes <= 0 || !detector.validLdsRange(address, bytes) ||
@@ -240,10 +248,12 @@ void WaveRaceState::registerLdsEvent(
     uint64_t pc, MemoryEventType type, std::vector<uint32_t> registers, uint64_t execMask,
     int waveSize, std::span<const uint32_t> laneBaseAddresses, int bytesPerLane, uint8_t byteMask,
     std::span<const amdgpu::MemoryCounterObligation> counterObligations,
-    MemoryOrderClass memoryOrder, uint64_t ldsLaneMask, int elementBytes) {
+    MemoryOrderClass memoryOrder, uint64_t ldsLaneMask, int elementBytes,
+    std::optional<uint64_t> allocationEnd) {
   IntervalSet intervals;
   forEachActiveLane(execMask & ldsLaneMask, waveSize, [&](int lane) {
-    appendLdsInterval(intervals, laneBaseAddresses[lane], bytesPerLane, *detector, elementBytes);
+    appendLdsInterval(intervals, laneBaseAddresses[lane], bytesPerLane, *detector, elementBytes,
+                      allocationEnd);
   });
   intervals.finalize();
   registerEventWithIntervals(pc, type, std::move(registers), execMask, byteMask,

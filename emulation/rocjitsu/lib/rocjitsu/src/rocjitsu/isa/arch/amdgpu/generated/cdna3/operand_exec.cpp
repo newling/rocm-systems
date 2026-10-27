@@ -92,11 +92,6 @@ bool Isa::simd_capable_value(OperandType opr_type, int ev) {
          amdgpu::can_resolve_src_scalar(ev, kM0EncodingValue);
 }
 
-uint32_t Isa::simd_broadcast_value(const amdgpu::Wavefront &wf, OperandType opr_type, int ev) {
-  return is_immediate_type(opr_type) ? static_cast<uint32_t>(ev)
-                                     : amdgpu::resolve_src_scalar(wf, ev, kM0EncodingValue);
-}
-
 bool Operand::simd_capable_exec() const {
   if (delegate())
     return delegate()->simd_capable();
@@ -108,6 +103,10 @@ bool Operand::simd_capable_exec() const {
 void Operand::read_lane_chunk_exec(const amdgpu::Wavefront &wf, uint32_t lane_base, uint32_t count,
                                    uint32_t *out) const {
   if (delegate()) {
+    if (auto value = amdgpu::resolve_delegated_inline_float16(*this)) {
+      std::ranges::fill_n(out, count, *value);
+      return;
+    }
     amdgpu::RegisterAccess(wf).read_chunk(*delegate(), lane_base, count, out);
     return;
   }
@@ -126,7 +125,7 @@ void Operand::read_lane_chunk_exec(const amdgpu::Wavefront &wf, uint32_t lane_ba
     std::ranges::copy_n(region.lanes().begin() + lane_base, count, out);
     return;
   }
-  std::ranges::fill_n(out, count, Isa::simd_broadcast_value(wf, opr_type_, encoding_value_));
+  std::ranges::fill_n(out, count, read_lane_exec(wf, lane_base));
 }
 
 void Operand::write_lane_chunk_exec(amdgpu::Wavefront &wf, uint32_t lane_base, uint32_t count,
@@ -176,8 +175,11 @@ uint32_t Operand::read_scalar_exec(const amdgpu::Wavefront &wf) const {
 }
 
 uint32_t Operand::read_lane_exec(const amdgpu::Wavefront &wf, uint32_t lane) const {
-  if (delegate())
+  if (delegate()) {
+    if (auto value = amdgpu::resolve_delegated_inline_float16(*this))
+      return *value;
     return amdgpu::RegisterAccess(wf).read_lane(*delegate(), lane);
+  }
   // Fieldless operands whose capability policy makes this
   // accessor inert (reads yield a benign 0, writes are no-ops).
   // Driven by the construction-time capability flags applied
@@ -192,7 +194,7 @@ uint32_t Operand::read_lane_exec(const amdgpu::Wavefront &wf, uint32_t lane) con
   if (is_immediate_type(opr_type_))
     return static_cast<uint32_t>(ev);
   if (size_bits_ == 16)
-    return amdgpu::resolve_src_scalar16(wf, ev, kM0EncodingValue);
+    return amdgpu::resolve_src_scalar16(wf, ev, kM0EncodingValue, lane_inline_float_format());
   return amdgpu::resolve_src_scalar(wf, ev, kM0EncodingValue);
 }
 

@@ -365,10 +365,10 @@ void RaceDetectorPlugin::onAmdgpuMemoryAccessRouted(const amdgpu::MemoryAccessOb
   if (inst.data()->tag() == amdgpu::LOCAL_MEM || mixedFlat) {
     auto &d = *inst.data_as<amdgpu::VectorMemState>();
     const uint64_t execMask = d.exec_mask;
-    // DDS participates in the instruction's dependencies, but its addresses
-    // do not describe bytes in the ordinary LDS allocation.
-    const uint64_t ldsMask =
-        (mixedFlat ? execMask & access.flat_local_lane_mask : execMask) & ~d.flat_dds_lane_mask;
+    // DDS and allocation-OOB lanes participate in the instruction's
+    // dependencies, but do not access bytes in the ordinary LDS allocation.
+    const uint64_t ldsMask = (mixedFlat ? execMask & access.flat_local_lane_mask : execMask) &
+                             ~(access.flat_dds_lane_mask | access.flat_local_oob_lane_mask);
     if (execMask == 0)
       return;
     auto type = d.is_load ? MemoryEventType::LDS_TO_VGPR : MemoryEventType::VGPR_TO_LDS;
@@ -388,7 +388,12 @@ void RaceDetectorPlugin::onAmdgpuMemoryAccessRouted(const amdgpu::MemoryAccessOb
       if (!(ldsMask & (1ULL << lane)))
         continue;
       auto validate = [&](uint64_t address) {
-        const auto bytes = detector->ldsBytesInRange(address, perLaneBytes, d.elem_size);
+        auto bytes = detector->ldsBytesInRange(address, perLaneBytes, d.elem_size);
+        if (access.flat_local_allocation_end && d.elem_size != 0) {
+          const uint64_t end = *access.flat_local_allocation_end;
+          const uint64_t available = address < end ? end - address : 0;
+          bytes = std::min<uint64_t>(bytes, available / d.elem_size * d.elem_size);
+        }
         if (bytes == 0)
           return amdgpu::kInvalidLdsAddress;
         const auto addr = static_cast<uint32_t>(address);
@@ -419,7 +424,8 @@ void RaceDetectorPlugin::onAmdgpuMemoryAccessRouted(const amdgpu::MemoryAccessOb
     } else {
       rs->registerLdsEvent(wf.pc, type, std::move(registers), execMask, wf.wf_size(),
                            std::span<const uint32_t>(laneAddrs, wf.wf_size()), perLaneBytes,
-                           byte_mask, obligations, memoryOrder, ldsMask, d.elem_size);
+                           byte_mask, obligations, memoryOrder, ldsMask, d.elem_size,
+                           access.flat_local_allocation_end);
     }
     // A mixed instruction has one counter entry, with all register lanes but
     // only the ordinary LDS lanes' intervals. Do not also register a global event.

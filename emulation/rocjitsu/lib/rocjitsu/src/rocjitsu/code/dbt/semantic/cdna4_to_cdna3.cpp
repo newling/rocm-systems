@@ -1033,6 +1033,23 @@ ExpandResult lower_cvt_f32_bf16_vop1_cdna4_to_cdna3(const Instruction &inst, uin
   }
 
   std::vector<uint32_t> words;
+  if (src.src0 >= cdna4::OPR_SRC_FLOAT_HALF && src.src0 <= cdna4::OPR_SRC_FLOAT_NEG_FOUR) {
+    // Numeric BF16 inline floats resolve to BF16 bits in SRC0[15:0]. The
+    // integer shift below would instead read their FP32 carrier. For these
+    // exact values, the widened BF16 result is the same FP32 inline constant.
+    words.push_back(
+        cdna3::build_vop1(cdna3::kVMovB32Vop1, {.src0 = static_cast<uint16_t>(src.src0),
+                                                .vdst = static_cast<uint8_t>(src.vdst)})[0]);
+    return ExpandResult::success(std::move(words));
+  }
+  if (src.src0 == cdna4::OPR_SRC_FLOAT_ONE_OVER_TWO_PI) {
+    // Unlike the other inline floats, widening BF16 inverse-two-pi clears
+    // fraction bits present in the FP32 inline constant (0x3e22f983).
+    words.push_back(cdna3::build_vop1(
+        cdna3::kVMovB32Vop1, {.src0 = kSrcLiteral32, .vdst = static_cast<uint8_t>(src.vdst)})[0]);
+    words.push_back(0x3e220000u);
+    return ExpandResult::success(std::move(words));
+  }
   // BF16 has the same sign and exponent layout as FP32, with the mantissa
   // truncated to the high 7 fraction bits. Converting BF16 bits in SRC0[15:0]
   // to FP32 is therefore just placing those 16 bits in FP32[31:16] and zeroing

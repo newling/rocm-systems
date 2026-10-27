@@ -11,6 +11,7 @@
 #include "rocjitsu/isa/arch/amdgpu/shared/dpp_sdwa_ops.h"
 #include "rocjitsu/isa/arch/amdgpu/shared/fp_mode.h"
 #include "rocjitsu/isa/arch/amdgpu/shared/pseudo_scalar.h"
+#include "rocjitsu/isa/arch/amdgpu/shared/scalar_f16_source.h"
 #include "rocjitsu/isa/arch/amdgpu/shared/simd_glue.h"
 #include "rocjitsu/isa/arch/amdgpu/shared/transcendental.h"
 #include "rocjitsu/vm/amdgpu/compute_unit.h"
@@ -4732,7 +4733,7 @@ void VSExpF16Vop3::execute_impl(amdgpu::Wavefront &wf) {
                 amdgpu::pseudo_scalar::Operation::EXP2,
                 util::f16_to_f32(static_cast<uint16_t>(
                     amdgpu::input_denormal::flush_input<amdgpu::fp_format::F16>(
-                        amdgpu::RegisterAccess(wf).read_scalar(src0),
+                        amdgpu::read_scalar_f16_carrier(src0, wf),
                         amdgpu::input_denormal::Policy::make(wf.fp_denorm_mode_f16_f64())))),
                 (inst_.abs & 1u) != 0, (inst_.neg & 1u) != 0, wf.fp_round_mode_f16_f64(),
                 wf.fp_denorm_mode_f16_f64(), inst_.omod, inst_.clamp, wf.fp16_ovfl()));
@@ -4748,7 +4749,7 @@ void VSLogF16Vop3::execute_impl(amdgpu::Wavefront &wf) {
                 amdgpu::pseudo_scalar::Operation::LOG2,
                 util::f16_to_f32(static_cast<uint16_t>(
                     amdgpu::input_denormal::flush_input<amdgpu::fp_format::F16>(
-                        amdgpu::RegisterAccess(wf).read_scalar(src0),
+                        amdgpu::read_scalar_f16_carrier(src0, wf),
                         amdgpu::input_denormal::Policy::make(wf.fp_denorm_mode_f16_f64())))),
                 (inst_.abs & 1u) != 0, (inst_.neg & 1u) != 0, wf.fp_round_mode_f16_f64(),
                 wf.fp_denorm_mode_f16_f64(), inst_.omod, inst_.clamp, wf.fp16_ovfl()));
@@ -4764,7 +4765,7 @@ void VSRcpF16Vop3::execute_impl(amdgpu::Wavefront &wf) {
                 amdgpu::pseudo_scalar::Operation::RCP,
                 util::f16_to_f32(static_cast<uint16_t>(
                     amdgpu::input_denormal::flush_input<amdgpu::fp_format::F16>(
-                        amdgpu::RegisterAccess(wf).read_scalar(src0),
+                        amdgpu::read_scalar_f16_carrier(src0, wf),
                         amdgpu::input_denormal::Policy::make(wf.fp_denorm_mode_f16_f64())))),
                 (inst_.abs & 1u) != 0, (inst_.neg & 1u) != 0, wf.fp_round_mode_f16_f64(),
                 wf.fp_denorm_mode_f16_f64(), inst_.omod, inst_.clamp, wf.fp16_ovfl()));
@@ -4780,7 +4781,7 @@ void VSRsqF16Vop3::execute_impl(amdgpu::Wavefront &wf) {
                 amdgpu::pseudo_scalar::Operation::RSQ,
                 util::f16_to_f32(static_cast<uint16_t>(
                     amdgpu::input_denormal::flush_input<amdgpu::fp_format::F16>(
-                        amdgpu::RegisterAccess(wf).read_scalar(src0),
+                        amdgpu::read_scalar_f16_carrier(src0, wf),
                         amdgpu::input_denormal::Policy::make(wf.fp_denorm_mode_f16_f64())))),
                 (inst_.abs & 1u) != 0, (inst_.neg & 1u) != 0, wf.fp_round_mode_f16_f64(),
                 wf.fp_denorm_mode_f16_f64(), inst_.omod, inst_.clamp, wf.fp16_ovfl()));
@@ -4796,7 +4797,7 @@ void VSSqrtF16Vop3::execute_impl(amdgpu::Wavefront &wf) {
                 amdgpu::pseudo_scalar::Operation::SQRT,
                 util::f16_to_f32(static_cast<uint16_t>(
                     amdgpu::input_denormal::flush_input<amdgpu::fp_format::F16>(
-                        amdgpu::RegisterAccess(wf).read_scalar(src0),
+                        amdgpu::read_scalar_f16_carrier(src0, wf),
                         amdgpu::input_denormal::Policy::make(wf.fp_denorm_mode_f16_f64())))),
                 (inst_.abs & 1u) != 0, (inst_.neg & 1u) != 0, wf.fp_round_mode_f16_f64(),
                 wf.fp_denorm_mode_f16_f64(), inst_.omod, inst_.clamp, wf.fp16_ovfl()));

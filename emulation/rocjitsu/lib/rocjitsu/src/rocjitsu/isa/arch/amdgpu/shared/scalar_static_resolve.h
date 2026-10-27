@@ -10,6 +10,22 @@
 namespace rocjitsu {
 namespace amdgpu {
 
+[[nodiscard]] inline std::optional<uint16_t> resolve_inline_float16_statically(int ev) {
+  constexpr uint16_t values[] = {0x3800u, 0xB800u, 0x3C00u, 0xBC00u, 0x4000u,
+                                 0xC000u, 0x4400u, 0xC400u, 0x3118u};
+  if (ev >= 240 && ev <= 248)
+    return values[ev - 240];
+  return std::nullopt;
+}
+
+[[nodiscard]] inline std::optional<uint16_t> resolve_inline_bfloat16_statically(int ev) {
+  constexpr uint16_t values[] = {0x3F00u, 0xBF00u, 0x3F80u, 0xBF80u, 0x4000u,
+                                 0xC000u, 0x4080u, 0xC080u, 0x3E22u};
+  if (ev >= 240 && ev <= 248)
+    return values[ev - 240];
+  return std::nullopt;
+}
+
 // Wavefront-free subset of resolve_src_scalar: the value of an inline constant
 // (small integers 0..64 / -1..-16 and the inline float constants), or nullopt
 // for any other encoding value. Negative inline integers are sign-extended to

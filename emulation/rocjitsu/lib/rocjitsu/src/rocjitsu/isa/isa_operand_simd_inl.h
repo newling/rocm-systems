@@ -11,6 +11,7 @@
 #ifndef ROCJITSU_ISA_ISA_OPERAND_SIMD_INL_H_
 #define ROCJITSU_ISA_ISA_OPERAND_SIMD_INL_H_
 
+#include "rocjitsu/isa/arch/amdgpu/shared/scalar_operand_resolve.h"
 #include "rocjitsu/isa/operand.h"
 #include "rocjitsu/vm/amdgpu/compute_unit.h"
 #include "rocjitsu/vm/amdgpu/operand_execution_access.h"
@@ -60,6 +61,10 @@ template <typename Isa>
 void AmdgpuIsaOperand<Isa>::read_lane_chunk(const amdgpu::Wavefront &wf, uint32_t lane_base,
                                             uint32_t count, uint32_t *out) const {
   if (this->delegate()) {
+    if (auto value = amdgpu::resolve_delegated_inline_float16(*this)) {
+      std::ranges::fill_n(out, count, *value);
+      return;
+    }
     this->delegate()->read_lane_chunk(wf, lane_base, count, out);
     return;
   }
@@ -79,8 +84,7 @@ void AmdgpuIsaOperand<Isa>::read_lane_chunk(const amdgpu::Wavefront &wf, uint32_
     std::ranges::copy_n(region.lanes().begin() + lane_base, count, out);
     return;
   }
-  std::ranges::fill_n(out, count,
-                      Isa::simd_broadcast_value(wf, this->opr_type_, this->encoding_value_));
+  std::ranges::fill_n(out, count, this->read_lane(wf, lane_base));
 }
 
 template <typename Isa>
