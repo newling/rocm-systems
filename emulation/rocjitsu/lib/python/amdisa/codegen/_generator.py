@@ -6754,11 +6754,16 @@ class CodeGenerator:
                     # lowered through sema_lower's mode-aware conversion helper.
                     mode_sensitive_f16_dst=not cls.startswith('scalar_'),
                     mask_result_writer=result_writer,
+                    # gfx1201 executes F16 pseudo-scalar transcendentals with
+                    # float inline selectors as the low half of the FP32
+                    # constant, and LLVM never emits that form for gfx12 or
+                    # gfx1250. Keep their raw carrier.
                     scalar_f16_inline_high={
                         i: self._scalar_f16_reads_high_half(inst.name)
                         for i, opnd in enumerate(src_operands)
                         if opnd.data_format_name == 'FMT_NUM_F16'
                         and src_reg_classes[i] == RegClass.SGPR
+                        and cls != 'pseudo_scalar_unary'
                     },
                 )
                 inst_fields = getattr(self, '_current_inst_fields', set())

@@ -4092,7 +4092,8 @@ def test_generated_pseudo_scalar_vop3_paths_ignore_exec_and_f16_opsel(
             # The source half is flushed under MODE before it is widened.
             flush = 'amdgpu::input_denormal::flush_input<amdgpu::fp_format::F16>('
             assert flush in body
-            assert 'amdgpu::read_scalar_f16_carrier(src0, wf)' in body
+            assert 'amdgpu::RegisterAccess(wf).read_scalar(src0)' in body
+            assert 'read_scalar_f16_carrier' not in body
             assert body.index('util::f16_to_f32(') < body.index(flush)
             assert 'amdgpu::RegisterAccess(wf).write_scalar(' in body
             assert 'amdgpu::transcendental::execute_pseudo_f16(' in body

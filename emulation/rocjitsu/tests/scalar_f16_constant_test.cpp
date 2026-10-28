@@ -253,22 +253,32 @@ TEST_P(ScalarF16ConstantTest, PseudoScalarF16WritesOnlyOneZeroPaddedScalarWord) 
   struct PseudoCase {
     ScalarOperation operation;
     uint32_t expected;
+    // Float inline 4.0 supplies the low half of 0x40800000, which is +0.0.
+    uint32_t inline_four;
   };
   constexpr std::array kPseudoCases{
-      PseudoCase{{"v_s_exp_f16", rdna4::kVSExpF16Vop3, cdna5::kVSExpF16Vop3}, 0x00004C00u},
-      PseudoCase{{"v_s_log_f16", rdna4::kVSLogF16Vop3, cdna5::kVSLogF16Vop3}, 0x00004000u},
-      PseudoCase{{"v_s_rcp_f16", rdna4::kVSRcpF16Vop3, cdna5::kVSRcpF16Vop3}, 0x00003400u},
-      PseudoCase{{"v_s_rsq_f16", rdna4::kVSRsqF16Vop3, cdna5::kVSRsqF16Vop3}, 0x00003800u},
-      PseudoCase{{"v_s_sqrt_f16", rdna4::kVSSqrtF16Vop3, cdna5::kVSSqrtF16Vop3}, 0x00004000u},
+      PseudoCase{
+          {"v_s_exp_f16", rdna4::kVSExpF16Vop3, cdna5::kVSExpF16Vop3}, 0x00004C00u, 0x00003C00u},
+      PseudoCase{
+          {"v_s_log_f16", rdna4::kVSLogF16Vop3, cdna5::kVSLogF16Vop3}, 0x00004000u, 0x0000FC00u},
+      PseudoCase{
+          {"v_s_rcp_f16", rdna4::kVSRcpF16Vop3, cdna5::kVSRcpF16Vop3}, 0x00003400u, 0x00007C00u},
+      PseudoCase{
+          {"v_s_rsq_f16", rdna4::kVSRsqF16Vop3, cdna5::kVSRsqF16Vop3}, 0x00003800u, 0x00007C00u},
+      PseudoCase{
+          {"v_s_sqrt_f16", rdna4::kVSSqrtF16Vop3, cdna5::kVSSqrtF16Vop3}, 0x00004000u, 0x00000000u},
   };
   write_sgpr(0, 0x3C004400u); // low 4.0h; high 1.0h must not be consumed.
   for (const PseudoCase &test : kPseudoCases) {
     SCOPED_TRACE(test.operation.mnemonic);
     ASSERT_NO_FATAL_FAILURE(expect_pseudo(test.operation, 0, test.expected));
     ASSERT_NO_FATAL_FAILURE(expect_pseudo(test.operation, 255, test.expected, 0x00004400u));
-    // CDNA5 permits numeric float inlines here; RDNA4 excludes these selectors.
+    // gfx1201 executes float inline selectors here as the low half of the FP32
+    // constant (v_s_sqrt_f16 4.0 returns 0); the RDNA4 decoder rejects them.
+    // LLVM never emits this form for gfx12 or gfx1250. CDNA5 decodes the
+    // selectors and follows the RDNA4 measurement.
     if (GetParam().arch == ROCJITSU_CODE_ARCH_CDNA5) {
-      ASSERT_NO_FATAL_FAILURE(expect_pseudo(test.operation, 246, test.expected)); // 4.0h
+      ASSERT_NO_FATAL_FAILURE(expect_pseudo(test.operation, 246, test.inline_four));
     }
   }
 }
