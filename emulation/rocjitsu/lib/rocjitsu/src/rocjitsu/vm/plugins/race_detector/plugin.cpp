@@ -513,8 +513,6 @@ void RaceDetectorPlugin::onAmdgpuMemoryAccessRouted(const amdgpu::MemoryAccessOb
 
 void RaceDetectorPlugin::onAmdgpuTensorDmaMemoryAccess(
     const amdgpu::TensorDmaMemoryAccessObservation &access, const amdgpu::Wavefront &wf) {
-  if (access.lds_ranges.empty())
-    return;
   auto *s = get_state(wf);
   assert(s && s->race_state);
   // The callback arrives while the tensor instruction executes or, for a
