@@ -1108,21 +1108,26 @@ TEST_F(PerfsimPluginTest, ReportsNegotiatedVersionForUnrepresentableInstruction)
   EXPECT_EQ(diagnostic.find("FFM v13"), std::string::npos);
 }
 
-TEST_F(PerfsimPluginTest, ExecutedTensorLoadWithoutGlobalRequestsKeepsTheDispatch) {
-  // Tensor loads that make no global requests: a tile wholly outside the tensor
-  // (which still zero-fills LDS), a NULL tensor and a NOP tile. Each is
-  // observed with no addresses, which perfsim must skip rather than reject.
-  // The control is in bounds.
+TEST_F(PerfsimPluginTest, ExecutedTensorDmaWithoutGlobalRequestsKeepsTheDispatch) {
+  // Tensor DMA instructions that make no global requests: a load whose tile
+  // lies wholly outside the tensor (which still zero-fills LDS), a NULL tensor,
+  // a NOP tile, a store wholly outside the tensor, and a gather with no valid
+  // indices. Each is observed with no addresses, which perfsim must skip
+  // rather than reject. The control is an in-bounds load.
   struct Case {
     uint32_t dispatch_id;
     uint32_t tensor_dim0 = 1;
     uint32_t count = 1;
     uint32_t tile_dim0 = 1;
-    uint32_t tile_dim1 = 0;
+    uint32_t tile_dim1 = 0; ///< Valid indices for a gather.
+    bool store = false;
+    bool gather = false;
   };
   for (const Case test_case : {Case{.dispatch_id = 60}, Case{.dispatch_id = 61, .tensor_dim0 = 0},
                                Case{.dispatch_id = 62, .count = 0},
-                               Case{.dispatch_id = 63, .tile_dim0 = 0, .tile_dim1 = 1}}) {
+                               Case{.dispatch_id = 63, .tile_dim0 = 0, .tile_dim1 = 1},
+                               Case{.dispatch_id = 64, .tensor_dim0 = 0, .store = true},
+                               Case{.dispatch_id = 65, .tile_dim1 = 0, .gather = true}}) {
     SCOPED_TRACE(test_case.dispatch_id);
     const std::string config = plugin_config();
     WaveFixture fixture;
@@ -1145,7 +1150,9 @@ TEST_F(PerfsimPluginTest, ExecutedTensorLoadWithoutGlobalRequestsKeepsTheDispatc
 
       // One i32 element at LDS offset 0 from a one-element tile.
       constexpr uint64_t kGlobal = 0x300000;
-      const std::array<uint32_t, 4> group0{test_case.count, 0, static_cast<uint32_t>(kGlobal),
+      const uint32_t gather_bits = test_case.gather ? (1u << 30) | (1u << 31) : 0;
+      const std::array<uint32_t, 4> group0{test_case.count | gather_bits, 0,
+                                           static_cast<uint32_t>(kGlobal),
                                            static_cast<uint32_t>(kGlobal >> 32) | 0x80000000u};
       const std::array<uint32_t, 8> group1{2u << 16,
                                            test_case.tensor_dim0 << 16,
@@ -1160,16 +1167,20 @@ TEST_F(PerfsimPluginTest, ExecutedTensorLoadWithoutGlobalRequestsKeepsTheDispatc
         fixture.cu->write_sgpr(sgprs + reg, group0[reg]);
       for (uint32_t reg = 0; reg < group1.size(); ++reg)
         fixture.cu->write_sgpr(sgprs + 12 + reg, group1[reg]);
+      // A gather reads its row indices from groups 2 and 3.
+      for (uint32_t reg = 20; reg < 28; ++reg)
+        fixture.cu->write_sgpr(sgprs + reg, 0);
 
       auto decoder = Decoder::create(ROCJITSU_CODE_ARCH_CDNA5);
       ASSERT_NE(decoder, nullptr);
-      const std::array<uint32_t, 3> words{0xD0710001, 0x7C000000, 0x7C7C0C00};
+      const std::array<uint32_t, 3> words{test_case.store ? 0xD0714001u : 0xD0710001u, 0x7C000000u,
+                                          test_case.gather ? 0x18140C00u : 0x7C7C0C00u};
       DecodeResult decoded = decoder->decode(words.data());
       ASSERT_FALSE(decoded.failed());
-      std::unique_ptr<Instruction> load = std::move(decoded).value();
-      ASSERT_EQ(load->mnemonic(), "tensor_load_to_lds");
-      group->onAmdgpuBeforeExecuteInstruction(wave.pc, *load, wave);
-      EXPECT_TRUE(fixture.cu->execute_instruction(load.get(), wave).succeeded());
+      std::unique_ptr<Instruction> inst = std::move(decoded).value();
+      ASSERT_EQ(inst->mnemonic(), test_case.store ? "tensor_store_from_lds" : "tensor_load_to_lds");
+      group->onAmdgpuBeforeExecuteInstruction(wave.pc, *inst, wave);
+      EXPECT_TRUE(fixture.cu->execute_instruction(inst.get(), wave).succeeded());
 
       const std::array<uint32_t, 1> end_words{0xBF810000};
       SyntheticInstruction end("s_endpgm", end_words, PROGRAM_TERMINATOR);
@@ -1188,6 +1199,65 @@ TEST_F(PerfsimPluginTest, ExecutedTensorLoadWithoutGlobalRequestsKeepsTheDispatc
     // Only the in-bounds control makes global requests to stage.
     EXPECT_EQ(line_with_prefix(trace, "tdm " + dispatch) != trace.size(),
               test_case.dispatch_id == 60);
+  }
+}
+
+TEST_F(PerfsimPluginTest, SkipsEmptyTensorDmaCompletionsBeforeValidatingTransferMetadata) {
+  // A NULL descriptor bypasses validation, so the transfer fields of an
+  // observation without global requests need not describe a valid transfer.
+  const std::string config = plugin_config();
+  uint32_t dispatch_id = 70;
+  for (const std::string_view mnemonic : {"tensor_load_to_lds", "tensor_store_from_lds"}) {
+    SCOPED_TRACE(mnemonic);
+    WaveFixture fixture;
+    testing::internal::CaptureStderr();
+    {
+      PerfsimPlugin plugin(config.c_str());
+      plugin.onInit();
+
+      const KernelDispatchInfo info = dispatch_info(dispatch_id);
+      plugin.onAmdgpuDispatchPacketProcessed(info);
+      plugin.onAmdgpuDispatchExecutionBegin(info.dispatch_id);
+      Wavefront &wave = fixture.wave(info.dispatch_id, 0, {0, 0, 0}, 0);
+      plugin.onAmdgpuWavefrontDispatched(wave);
+
+      const std::array<uint32_t, 3> words{0xD0710001, 0x7C000000, 0x7C7C0C00};
+      SyntheticInstruction tensor(mnemonic, words, MEMORY_OP);
+      plugin.onAmdgpuBeforeExecuteInstruction(0x1280, tensor, wave);
+      TensorDmaMemoryAccessObservation access;
+      access.mnemonic = mnemonic;
+      access.pc = 0x1280;
+      access.compute_unit_id = static_cast<uint32_t>(wave.cu().id());
+      access.dispatch_id = info.dispatch_id;
+      access.queue_id = wave.queue_id();
+      access.workgroup_id = wave.wg_id();
+      access.wavefront_id = wave.wf_id();
+      access.process_id = wave.process_id();
+      access.is_load = mnemonic == "tensor_load_to_lds";
+      // None of these describe a valid transfer.
+      access.element_size_bytes = 3;
+      access.data_size = 7;
+      access.tile_dim0 = 0;
+      access.tensor_dim0_stride = -1;
+      access.tensor_dim1_stride = -1;
+      plugin.onAmdgpuTensorDmaMemoryAccess(access);
+
+      const std::array<uint32_t, 1> end_words{0xBF810000};
+      SyntheticInstruction end("s_endpgm", end_words, PROGRAM_TERMINATOR);
+      plugin.onAmdgpuBeforeExecuteInstruction(0x128C, end, wave);
+      plugin.onAmdgpuWavefrontHalted(wave);
+      plugin.onAmdgpuDispatchExecutionEnd(info.dispatch_id);
+      plugin.onShutdown();
+    }
+    const std::string diagnostic = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(diagnostic.find("tensor-DMA"), std::string::npos) << diagnostic;
+
+    const std::string dispatch = std::to_string(dispatch_id) + " ";
+    const auto trace = lines(read_file(trace_.path()));
+    EXPECT_NE(line_with_prefix(trace, "begin " + dispatch), trace.size());
+    EXPECT_NE(line_with_prefix(trace, "end " + dispatch), trace.size());
+    EXPECT_EQ(line_with_prefix(trace, "tdm " + dispatch), trace.size());
+    ++dispatch_id;
   }
 }
 

@@ -197,12 +197,15 @@ public:
   /// Called once for every tensor DMA instruction that completes, after it and
   /// any descriptor-requested atomic-barrier arrival return normally. The
   /// observation contains the in-bounds global requests attempted, in
-  /// execution order, and the LDS byte ranges the transfer wrote or read. A
-  /// load whose tile lies wholly outside the tensor has LDS ranges but no global
-  /// requests, and an instruction that moves no data, such as a NULL tensor or
-  /// a NOP tile, has neither. It intentionally does not filter
-  /// memory access outcomes, matching the observer boundary. Its address view
-  /// and LDS ranges are borrowed and valid only during this callback.
+  /// execution order, and the LDS byte ranges the transfer wrote or read.
+  /// Empty completions are delivered: a load whose tile lies wholly outside the
+  /// tensor has LDS ranges but no global requests, and an instruction that moves
+  /// no data (a NULL tensor, a NOP tile, an empty gather or a store wholly
+  /// outside the tensor) has neither. A NULL tensor's descriptor is not
+  /// validated, so consumers must not interpret its transfer fields. It
+  /// intentionally does not filter memory access outcomes, matching the
+  /// observer boundary. Its address view and LDS ranges are borrowed and valid
+  /// only during this callback.
   /// May run concurrently across simulation partitions unless
   /// requires_serial_hot_hooks() returns true.
   virtual void
