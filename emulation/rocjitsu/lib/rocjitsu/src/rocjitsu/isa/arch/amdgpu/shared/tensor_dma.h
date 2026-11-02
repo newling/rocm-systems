@@ -8,6 +8,7 @@
 #include "rocjitsu/vm/amdgpu/lds_barrier_cell.h"
 #include "rocjitsu/vm/amdgpu/register_access.h"
 #include "rocjitsu/vm/amdgpu/wavefront.h"
+#include "rocjitsu/vm/plugins/tensor_dma_issue_observation.h"
 #include "rocjitsu/vm/plugins/tensor_dma_memory_access_observation.h"
 #include "util/bit.h"
 #include "util/log.h"
@@ -397,9 +398,6 @@ public:
   std::optional<GpuVmAccess> access;
   std::vector<TensorDmaTransferElement> elements;
   std::size_t next_element = 0;
-  /// PC of the tensor DMA instruction. A deferred transfer completes after the
-  /// wave's PC has advanced past it.
-  uint64_t pc = 0;
   uint64_t lds_end = 0;
   VmAccessOutcome outcome = VmAccessOutcome::Complete;
   bool store_from_lds = false;
@@ -727,7 +725,7 @@ inline bool materialize_observed_addresses(const void *context, std::span<uint64
   return fits && next_address == addresses.size();
 }
 
-/// @brief Merge the LDS bytes a transfer touched into runs, in element order.
+/// @brief Merge the LDS bytes a transfer touches into runs, in element order.
 /// @details Loads write every element; out-of-tensor elements are zero-filled.
 /// Stores read only in-bounds elements. Bytes outside the wave's LDS are omitted.
 inline std::vector<TensorDmaLdsRange> tensor_dma_lds_ranges(const TensorDmaState &state) {
@@ -745,6 +743,20 @@ inline std::vector<TensorDmaLdsRange> tensor_dma_lds_ranges(const TensorDmaState
   return ranges;
 }
 
+/// @brief Report a tensor DMA instruction at issue, before any data moves.
+/// @details A disabled descriptor has no elements and reports no LDS ranges; it
+/// still occupies a TENSORcnt slot.
+inline void report_issued_tensor_dma(Wavefront &wf, const TensorDmaState &state) {
+  if (!wf.cu().observes_tensor_dma_issue())
+    return;
+  const std::vector<TensorDmaLdsRange> lds_ranges = tensor_dma_lds_ranges(state);
+  wf.cu().report_tensor_dma_issue({
+      .is_load = !state.store_from_lds,
+      .element_size_bytes = state.desc.elem_size,
+      .lds_ranges = lds_ranges,
+  });
+}
+
 inline void report_completed_tensor_dma(const Instruction &inst, Wavefront &wf,
                                         TensorDmaState &state) {
   if (state.outcome != VmAccessOutcome::Complete || state.observation_reported)
@@ -756,11 +768,12 @@ inline void report_completed_tensor_dma(const Instruction &inst, Wavefront &wf,
 
   const size_t observed_address_count = static_cast<size_t>(
       std::ranges::count_if(state.elements, &TensorDmaTransferElement::in_bounds));
-  const std::vector<TensorDmaLdsRange> lds_ranges = tensor_dma_lds_ranges(state);
+  if (observed_address_count == 0)
+    return;
 
   const TensorDmaMemoryAccessObservation access{
       .mnemonic = inst.mnemonic(),
-      .pc = state.pc,
+      .pc = wf.pc,
       .compute_unit_id = wf.cu().id(),
       .dispatch_id = wf.dispatch_id(),
       .queue_id = wf.queue_id(),
@@ -778,7 +791,6 @@ inline void report_completed_tensor_dma(const Instruction &inst, Wavefront &wf,
           static_cast<int64_t>(state.desc.global_strides[0] * state.desc.elem_size),
       .tensor_dim1_stride =
           static_cast<int64_t>(state.desc.global_strides[1] * state.desc.elem_size),
-      .lds_ranges = lds_ranges,
   };
   wf.cu().report_tensor_dma_memory_access(access);
 }
@@ -964,16 +976,15 @@ util::Result execute_tensor_dma(Inst &inst, Wavefront &wf, bool store_from_lds) 
       return util::Result::failure();
     std::unique_ptr<TensorDmaState> state =
         std::make_unique<TensorDmaState>(desc.value(), store_from_lds);
-    state->pc = wf.pc;
     if (desc.value().active() && prepare_tensor(*state, wf).failed()) [[unlikely]]
       return util::Result::failure();
+    report_issued_tensor_dma(wf, *state);
     inst.set_data(std::move(state));
   }
   TensorDmaState &state = *inst.template data_as<TensorDmaState>();
-  // A NULL tensor copies nothing and sends no barrier arrive, but it still
-  // completes on TENSORcnt, so it is reported like any other instruction.
-  if (state.desc.active())
-    state.outcome = resume_tensor_dma_state(state, wf);
+  if (!state.desc.active())
+    return util::Result::success();
+  state.outcome = resume_tensor_dma_state(state, wf);
   report_completed_tensor_dma(inst, wf, state);
   return util::Result::success();
 }

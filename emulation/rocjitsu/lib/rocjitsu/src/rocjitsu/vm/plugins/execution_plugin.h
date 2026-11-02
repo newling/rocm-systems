@@ -18,6 +18,7 @@
 #include "rocjitsu/vm/plugins/kernel_dispatch_info.h"
 #include "rocjitsu/vm/plugins/memory_access_observation.h"
 #include "rocjitsu/vm/plugins/plugin_sink.h"
+#include "rocjitsu/vm/plugins/tensor_dma_issue_observation.h"
 #include "rocjitsu/vm/plugins/tensor_dma_memory_access_observation.h"
 #include "rocjitsu/vm/plugins/wavefront_state.h"
 
@@ -194,18 +195,11 @@ public:
     onAmdgpuMemoryAccessRouted(access, wf);
   }
 
-  /// Called once for every tensor DMA instruction that completes, after it and
-  /// any descriptor-requested atomic-barrier arrival return normally. The
-  /// observation contains the in-bounds global requests attempted, in
-  /// execution order, and the LDS byte ranges the transfer wrote or read.
-  /// Empty completions are delivered: a load whose tile lies wholly outside the
-  /// tensor has LDS ranges but no global requests, and an instruction that moves
-  /// no data (a NULL tensor, a NOP tile, an empty gather or a store wholly
-  /// outside the tensor) has neither. A NULL tensor's descriptor is not
-  /// validated, so consumers must not interpret its transfer fields. It
-  /// intentionally does not filter memory access outcomes, matching the
-  /// observer boundary. Its address view and LDS ranges are borrowed and valid
-  /// only during this callback.
+  /// Called after one tensor DMA instruction and any descriptor-requested
+  /// atomic-barrier arrival return normally. The observation contains only
+  /// in-bounds global requests attempted, in execution order. It intentionally
+  /// does not filter memory access outcomes, matching the observer boundary.
+  /// Its deferred address view is borrowed and valid only during this callback.
   /// May run concurrently across simulation partitions unless
   /// requires_serial_hot_hooks() returns true.
   virtual void
@@ -217,6 +211,17 @@ public:
                                              const amdgpu::Wavefront & /*wf*/) {
     onAmdgpuTensorDmaMemoryAccess(access);
   }
+
+  /// Called once when a tensor DMA instruction issues, after its descriptor is
+  /// read and validated and before any data moves. This is the tensor DMA
+  /// counterpart of onAmdgpuMemoryAccessRouted(): it fires in the issuing
+  /// wave's instruction step even when the transfer later waits for memory,
+  /// and for instructions that move no data. Its LDS ranges are borrowed and
+  /// valid only during this callback.
+  /// May run concurrently across simulation partitions unless
+  /// requires_serial_hot_hooks() returns true.
+  virtual void onAmdgpuTensorDmaIssued(const amdgpu::TensorDmaIssueObservation & /*issue*/,
+                                       const amdgpu::Wavefront & /*wf*/) {}
 
   /// Called when the command processor has parsed an AQL kernel dispatch packet
   /// and created a DispatchEntry. Fires during packet fetching, before any
@@ -326,6 +331,11 @@ public:
   /// opt in explicitly. The group samples this stable policy when the plugin is
   /// added.
   virtual bool observes_tensor_dma_memory_access() const { return false; }
+
+  /// Whether this plugin consumes onAmdgpuTensorDmaIssued(). Building the LDS
+  /// ranges is work on the instruction path, so consumers opt in explicitly.
+  /// The group samples this stable policy when the plugin is added.
+  virtual bool observes_tensor_dma_issue() const { return false; }
 
   /// Whether this plugin needs typed scalar-register reads or legacy SGPR reads.
   /// The group samples this policy once when the plugin is added. The

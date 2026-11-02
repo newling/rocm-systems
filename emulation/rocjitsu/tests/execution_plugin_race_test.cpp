@@ -460,9 +460,6 @@ INSTANTIATE_TEST_SUITE_P(BlockLoads, BlockLoadRaceTest,
 /// in race_detector_tests.cpp; these tests cover the hook's translation.
 class TensorDmaRaceTest : public ::testing::Test {
 protected:
-  static constexpr uint64_t kTensorPc = 0x2010;
-  static constexpr uint64_t kNextPc = 0x201c;
-
   PluginFixture fixture;
   StringSink *sink = nullptr;
   std::array<Wavefront *, 2> waves{};
@@ -500,22 +497,15 @@ protected:
                                                             *waves[wave]);
   }
 
-  /// Report one tensor DMA transfer and return whether it produced a race.
+  /// Issue one tensor DMA instruction and return whether it produced a race.
   bool transfer(int wave, bool is_load, std::span<const TensorDmaLdsRange> ranges) {
     // Each access gets a distinct PC so reports are not deduplicated.
     waves[wave]->pc += 16;
     execute_tensor(wave, is_load);
     const size_t previous = sink->str().size();
-    TensorDmaMemoryAccessObservation access;
-    access.mnemonic = is_load ? "tensor_load_to_lds" : "tensor_store_from_lds";
-    access.pc = waves[wave]->pc;
-    // The wave has moved past the instruction, as for a deferred transfer.
-    waves[wave]->pc += 8;
-    access.element_size_bytes = sizeof(uint32_t);
-    access.data_size = 2;
-    access.is_load = is_load;
-    access.lds_ranges = ranges;
-    fixture.plugin_group_->onAmdgpuTensorDmaMemoryAccess(access, *waves[wave]);
+    fixture.plugin_group_->onAmdgpuTensorDmaIssued(
+        {.is_load = is_load, .element_size_bytes = sizeof(uint32_t), .lds_ranges = ranges},
+        *waves[wave]);
     return sink->str().find("RACE ", previous) != std::string::npos;
   }
 
@@ -555,34 +545,6 @@ protected:
   }
 
   void barrier() { fixture.plugin_group_->onAmdgpuBarrierResolved(waves); }
-
-  /// Wave 0 executes a tensor load at 0x2010 that overwrites bytes wave 1 is
-  /// still reading. When `deferred`, its callback arrives as the pipeline
-  /// completes a deferred transfer: wave 0's PC has advanced to 0x201c, but
-  /// the wave, held in VM_RETRY, has issued nothing else. Returns the race
-  /// report.
-  std::string tensor_load_racing_an_older_read(bool deferred) {
-    EXPECT_FALSE(ds_read(1, 4));
-    util::StringDiagnostic error;
-    const std::array<uint32_t, 3> tensor_words{0xd0710001u, 0x7c000000u, 0x7c7c0c00u};
-    auto tensor = decoder->decode_window(tensor_words, kTensorPc, error.emitter());
-    EXPECT_TRUE(tensor.succeeded()) << error.message();
-    waves[0]->pc = kTensorPc;
-    fixture.plugin_group_->onAmdgpuBeforeExecuteInstruction(kTensorPc, *tensor.value(), *waves[0]);
-    if (deferred)
-      waves[0]->pc = kNextPc;
-    const std::array<TensorDmaLdsRange, 1> ranges{{{.address = 0, .bytes = 16}}};
-    TensorDmaMemoryAccessObservation access;
-    access.mnemonic = "tensor_load_to_lds";
-    access.pc = kTensorPc;
-    access.element_size_bytes = sizeof(uint32_t);
-    access.data_size = 2;
-    access.is_load = true;
-    access.lds_ranges = ranges;
-    const size_t previous = sink->str().size();
-    fixture.plugin_group_->onAmdgpuTensorDmaMemoryAccess(access, *waves[0]);
-    return sink->str().substr(previous);
-  }
 };
 
 TEST_F(TensorDmaRaceTest, LoadIsAnLdsWriteRetiredByTensorcntAndBarrier) {
@@ -618,39 +580,25 @@ TEST_F(TensorDmaRaceTest, TransferIsCheckedAgainstPendingLdsAccesses) {
   EXPECT_NE(report.find("wave=0 lane=-1"), std::string::npos) << report;
 }
 
-TEST_F(TensorDmaRaceTest, RaceFoundByADeferredTransferIsReportedAtItsInstruction) {
-  const std::string report = tensor_load_racing_an_older_read(/*deferred=*/true);
-  EXPECT_NE(report.find(std::format("==>  0x{:x}  tensor_load_to_lds", kTensorPc)),
+TEST_F(TensorDmaRaceTest, RaceIsReportedAtTheTensorInstruction) {
+  // Keep wave 0's PCs distinct from wave 1's so the report identifies the event.
+  waves[0]->pc = 0x2000;
+  const uint64_t instruction_pc = waves[0]->pc + 16;
+  tensor_load(0, {{.address = 0, .bytes = 16}});
+  const size_t previous = sink->str().size();
+  EXPECT_TRUE(ds_read(1, 4));
+  const std::string report = sink->str().substr(previous);
+  EXPECT_NE(report.find(std::format("==>  0x{:x}  tensor_load_to_lds", instruction_pc)),
             std::string::npos)
       << report;
-  EXPECT_NE(report.find("; <-- wave 0"), std::string::npos) << report;
-  EXPECT_EQ(report.find(std::format("==>  0x{:x}", kNextPc)), std::string::npos) << report;
 }
 
-TEST_F(TensorDmaRaceTest, RaceFoundByAnImmediateTransferIsReportedAtItsInstruction) {
-  const std::string report = tensor_load_racing_an_older_read(/*deferred=*/false);
-  EXPECT_NE(report.find(std::format("==>  0x{:x}  tensor_load_to_lds", kTensorPc)),
-            std::string::npos)
-      << report;
-  EXPECT_NE(report.find("; <-- wave 0"), std::string::npos) << report;
-}
-
-TEST_F(TensorDmaRaceTest, RejectsATransferThatIsNotTheCurrentInstruction) {
-  // The wave issues nothing after a tensor instruction until its transfer is
-  // observed, so a callback for any other PC is a protocol error.
-  execute_tensor(0, /*is_load=*/true);
-  const std::array<TensorDmaLdsRange, 1> ranges{{{.address = 0, .bytes = 16}}};
-  TensorDmaMemoryAccessObservation access;
-  access.mnemonic = "tensor_load_to_lds";
-  access.pc = waves[0]->pc + 8;
-  access.element_size_bytes = sizeof(uint32_t);
-  access.data_size = 2;
-  access.is_load = true;
-  access.lds_ranges = ranges;
-  EXPECT_THROW(fixture.plugin_group_->onAmdgpuTensorDmaMemoryAccess(access, *waves[0]),
-               std::logic_error);
-  // Nothing was registered: the bytes are not pending.
-  EXPECT_FALSE(ds_read(1, 4));
+TEST_F(TensorDmaRaceTest, PartialTensorcntWaitLeavesOnlyTheNewestTransferPending) {
+  tensor_load(0, {{.address = 0, .bytes = 16}});
+  tensor_load(0, {{.address = 32, .bytes = 16}});
+  wait_tensorcnt(0, 1);
+  EXPECT_FALSE(ds_read(0, 4));
+  EXPECT_TRUE(ds_read(0, 36));
 }
 
 TEST_F(TensorDmaRaceTest, TransferWithoutLdsAccessStillCountsOnTensorcnt) {
@@ -660,20 +608,6 @@ TEST_F(TensorDmaRaceTest, TransferWithoutLdsAccessStillCountsOnTensorcnt) {
   tensor_load(0, {});
   wait_tensorcnt(0, 1);
   EXPECT_FALSE(ds_read(0, 4));
-}
-
-TEST_F(TensorDmaRaceTest, EventIsRecordedAtTheObservedInstructionPc) {
-  // A deferred transfer completes after the wave's PC has moved past it; the
-  // event belongs to the observation's PC, not the wave's current one. Keep
-  // wave 0's PCs distinct from wave 1's so the report identifies the event.
-  waves[0]->pc = 0x2000;
-  const uint64_t instruction_pc = waves[0]->pc + 16;
-  tensor_load(0, {{.address = 0, .bytes = 16}});
-  const size_t previous = sink->str().size();
-  EXPECT_TRUE(ds_read(1, 4));
-  const std::string report = sink->str().substr(previous);
-  EXPECT_NE(report.find(std::format("0x{:x}", instruction_pc)), std::string::npos) << report;
-  EXPECT_EQ(report.find(std::format("0x{:x}", instruction_pc + 8)), std::string::npos) << report;
 }
 
 /// Executes decoded tensor DMA instructions, so the emulator itself reports

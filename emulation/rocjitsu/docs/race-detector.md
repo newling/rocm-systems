@@ -204,7 +204,9 @@ races. Some examples:
   store's source before `s_wait_tensorcnt` is reported; other waves also need an
   `s_barrier`. A load covers every element of its tile, including elements
   outside the tensor, which it zero-fills; padding bytes are excluded. A store
-  covers only the elements inside the tensor.
+  covers only the elements inside the tensor. Each instruction is registered
+  when it issues, as ordinary memory instructions are, so an instruction that
+  moves no data still occupies its `tensorcnt` slot.
 
 Detection is at byte granularity: D16 (half-register) loads only flag races on
 the affected bytes, and LDS races are tracked per byte.
@@ -495,13 +497,6 @@ gfx1151, using absolute paths from this source tree. The original
   `wait_hazard_test.cpp` suite records this boundary. Supporting embedded waits
   requires retirement before the instruction's register accesses.
 
-- **Deferred tensor DMA transfers**: a tensor DMA transfer is registered when it
-  completes. When the emulator defers a transfer until its memory becomes
-  available, the issuing wave stalls, but other waves keep running. Their LDS
-  accesses during the delay are checked when the transfer is registered. Such a
-  race is still reported at the tensor instruction, not at the PC the wave has
-  moved on to.
-
 - **Tensor DMA scope**: only the LDS side of a transfer is tracked. Its global
   memory accesses are not checked.
 
@@ -514,6 +509,12 @@ gfx1151, using absolute paths from this source tree. The original
   correctly synchronized through the barrier cell is therefore reported as
   racing with the tensor load. These reports are false positives, not missing
   coverage.
+
+- **NULL tensor descriptors**: like the emulator, the detector counts a NULL
+  descriptor (`count = 0`) on `tensorcnt`. Hardware behavior for this encoding
+  is not established. If hardware does not count it, a nonzero
+  `s_wait_tensorcnt` that the detector accepts can leave an earlier transfer
+  pending, so a real race would go unreported.
 
 - **Conservative DPP/SDWA write masks**: WAW precision depends on the execution
   plugin's instruction-write lane and byte masks. DPP destinations can currently
