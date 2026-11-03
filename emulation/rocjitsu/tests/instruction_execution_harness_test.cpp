@@ -11043,73 +11043,107 @@ TEST(HwregHelperTest, LegacyRdnaFlatScratchWritesPreserveTheOtherAddressBits) {
 TEST(LegacyRdnaFlatTest, PrivateAndGlobalLanesKeepDistinctMultiwordLayouts) {
   for (const auto arch : {ROCJITSU_CODE_ARCH_RDNA1, ROCJITSU_CODE_ARCH_RDNA2}) {
     for (uint32_t wave_size : {32u, 64u}) {
-      SCOPED_TRACE(testing::Message() << arch << " wave=" << wave_size);
-      amdgpu::GpuMemory memory("legacy_flat_memory");
-      amdgpu::L2Cache l2("legacy_flat_l2");
-      l2.set_backing_memory(&memory);
-      amdgpu::ComputeUnitCore::Config cfg{};
-      cfg.arch = arch;
-      cfg.num_wf_slots = 1;
-      cfg.sgprs_per_wf = 106;
-      cfg.vgprs_per_wf = 256;
-      auto cu = amdgpu::ComputeUnitCore::create("legacy_flat_cu", cfg, &memory, &l2);
-      auto *wf = cu->dispatch_wf(0, 0, 106, 256, wave_size);
-      ASSERT_NE(wf, nullptr);
-      constexpr uint64_t private_base = 0x2000000000000ULL;
-      constexpr uint64_t scratch_base = 0x8000;
-      constexpr uint64_t global_address = 0x2000;
-      wf->set_apertures(0, 0, private_base, private_base + 0x10000);
-      wf->set_scratch_base(scratch_base);
-      wf->set_exec(3);
-      const auto vb = wf->vgpr_alloc().base;
-      for (uint32_t lane = 0; lane < 2; ++lane) {
-        const uint64_t address = lane == 0 ? private_base : global_address;
-        cu->write_vgpr(vb, lane, static_cast<uint32_t>(address));
-        cu->write_vgpr(vb + 1, lane, address >> 32);
-        cu->write_vgpr(vb + 2, lane, 0x73100000u + lane);
-        cu->write_vgpr(vb + 3, lane, 0x93500000u + lane);
+      for (uint32_t private_lane : {0u, wave_size - 1}) {
+        for (uint32_t private_offset : {0u, 3u, 8u}) {
+          SCOPED_TRACE(testing::Message() << arch << " wave=" << wave_size << " private_lane="
+                                          << private_lane << " private_offset=" << private_offset);
+          amdgpu::GpuMemory memory("legacy_flat_memory");
+          amdgpu::L2Cache l2("legacy_flat_l2");
+          l2.set_backing_memory(&memory);
+          amdgpu::ComputeUnitCore::Config cfg{};
+          cfg.arch = arch;
+          cfg.num_wf_slots = 1;
+          cfg.sgprs_per_wf = 106;
+          cfg.vgprs_per_wf = 256;
+          auto cu = amdgpu::ComputeUnitCore::create("legacy_flat_cu", cfg, &memory, &l2);
+          auto *wf = cu->dispatch_wf(0, 0, 106, 256, wave_size);
+          ASSERT_NE(wf, nullptr);
+          constexpr uint64_t private_base = 0x2000000000000ULL;
+          constexpr uint64_t scratch_base = 0x8000;
+          constexpr uint64_t global_address = 0x2000;
+          constexpr uint32_t global_lane = 1;
+          wf->set_apertures(0, 0, private_base, private_base + 0x10000);
+          wf->set_scratch_base(scratch_base);
+          wf->set_exec((uint64_t{1} << private_lane) | (uint64_t{1} << global_lane));
+          const auto vb = wf->vgpr_alloc().base;
+          for (uint32_t lane : {private_lane, global_lane}) {
+            const uint64_t address =
+                lane == private_lane ? private_base + private_offset : global_address;
+            cu->write_vgpr(vb, lane, static_cast<uint32_t>(address));
+            cu->write_vgpr(vb + 1, lane, address >> 32);
+            cu->write_vgpr(vb + 2, lane, 0x73100000u + lane);
+            cu->write_vgpr(vb + 3, lane, 0x93500000u + lane);
+          }
+          const uint32_t stride = wave_size * 4;
+          for (uint32_t offset = 0; offset < 4 * stride; offset += 4)
+            memory.write32(scratch_base + offset, 0xa5a5a5a5);
+          for (const auto address : {global_address, global_address + 4, global_address + stride})
+            memory.write32(address, 0xa5a5a5a5);
+          auto decoder = Decoder::create(arch);
+          const auto words =
+              arch == ROCJITSU_CODE_ARCH_RDNA1
+                  ? rdna1::build_flat(rdna1::kFlatStoreDwordx2,
+                                      {.seg = 0, .addr = 0, .data = 2, .saddr = 0x7d})
+                  : rdna2::build_flat(rdna2::kFlatStoreDwordx2,
+                                      {.seg = 0, .addr = 0, .data = 2, .saddr = 0x7d});
+          auto store = std::unique_ptr<Instruction>(decode_valid(*decoder, words.data()));
+          ASSERT_NE(store, nullptr);
+          ASSERT_TRUE(cu->execute_instruction(store.get(), *wf).succeeded());
+          amdgpu::GlobalMemPipeline pipeline(&cu->l1_vector(), &l2);
+          EXPECT_EQ(pipeline.issue(store.release(), *wf), amdgpu::VmAccessOutcome::Complete);
+          cu->flush_all();
+          // Build a lane-local byte image so offset 3 checks both sides of a
+          // dword boundary without using the emulator's address helper.
+          std::array<uint8_t, 16> expected_private;
+          expected_private.fill(0xa5);
+          const std::array<uint32_t, 2> payload{0x73100000u + private_lane,
+                                                0x93500000u + private_lane};
+          for (uint32_t byte = 0; byte < 8; ++byte)
+            expected_private[private_offset + byte] = payload[byte / 4] >> (8 * (byte % 4));
+          for (uint32_t row = 0; row < 4; ++row) {
+            uint32_t expected_word = 0;
+            for (uint32_t byte = 0; byte < 4; ++byte)
+              expected_word |= uint32_t{expected_private[row * 4 + byte]} << (8 * byte);
+            for (uint32_t lane = 0; lane < wave_size; ++lane) {
+              EXPECT_EQ(memory.read32(scratch_base + row * stride + lane * 4),
+                        lane == private_lane ? expected_word : 0xa5a5a5a5u)
+                  << "row=" << row << " lane=" << lane;
+            }
+          }
+          EXPECT_EQ(memory.read32(global_address), 0x73100001u);
+          EXPECT_EQ(memory.read32(global_address + 4), 0x93500001u);
+          EXPECT_EQ(memory.read32(global_address + stride), 0xa5a5a5a5u);
+          // Compiler spills mix generic pointers with the queue's private V#.
+          const auto sb = wf->sgpr_alloc().base;
+          cu->write_sgpr(sb, scratch_base);
+          cu->write_sgpr(sb + 1, 0x80000000u);
+          cu->write_sgpr(sb + 2, 0x100000u);
+          cu->write_sgpr(sb + 3, (0x21c14facu & ~(3u << 21)) | ((wave_size == 32 ? 2u : 3u) << 21));
+          wf->set_exec(uint64_t{1} << private_lane);
+          cu->write_vgpr(vb, private_lane, private_offset);
+          cu->write_vgpr(vb + 2, private_lane, 0);
+          cu->write_vgpr(vb + 3, private_lane, 0);
+          const auto buffer_words =
+              arch == ROCJITSU_CODE_ARCH_RDNA1
+                  ? rdna1::build_mubuf(rdna1::kBufferLoadDwordx2, {.offen = private_offset != 0,
+                                                                   .vaddr = 0,
+                                                                   .vdata = 2,
+                                                                   .srsrc = 0,
+                                                                   .soffset = 128})
+                  : rdna2::build_mubuf(rdna2::kBufferLoadDwordx2, {.offen = private_offset != 0,
+                                                                   .vaddr = 0,
+                                                                   .vdata = 2,
+                                                                   .srsrc = 0,
+                                                                   .soffset = 128});
+          auto load = std::unique_ptr<Instruction>(decode_valid(*decoder, buffer_words.data()));
+          ASSERT_NE(load, nullptr);
+          ASSERT_TRUE(cu->execute_instruction(load.get(), *wf).succeeded());
+          EXPECT_EQ(pipeline.issue(load.release(), *wf), amdgpu::VmAccessOutcome::Complete);
+          EXPECT_EQ(cu->read_vgpr(vb + 2, private_lane), payload[0]);
+          EXPECT_EQ(cu->read_vgpr(vb + 3, private_lane), payload[1]);
+          wf->halt();
+        }
       }
-      const uint32_t stride = wave_size * 4;
-      for (const auto address : {scratch_base, scratch_base + 4, scratch_base + stride,
-                                 global_address, global_address + 4, global_address + stride})
-        memory.write32(address, 0xa5a5a5a5);
-      auto decoder = Decoder::create(arch);
-      const auto words = arch == ROCJITSU_CODE_ARCH_RDNA1
-                             ? rdna1::build_flat(rdna1::kFlatStoreDwordx2,
-                                                 {.seg = 0, .addr = 0, .data = 2, .saddr = 0x7d})
-                             : rdna2::build_flat(rdna2::kFlatStoreDwordx2,
-                                                 {.seg = 0, .addr = 0, .data = 2, .saddr = 0x7d});
-      auto store = std::unique_ptr<Instruction>(decode_valid(*decoder, words.data()));
-      ASSERT_NE(store, nullptr);
-      ASSERT_TRUE(cu->execute_instruction(store.get(), *wf).succeeded());
-      amdgpu::GlobalMemPipeline pipeline(&cu->l1_vector(), &l2);
-      EXPECT_EQ(pipeline.issue(store.release(), *wf), amdgpu::VmAccessOutcome::Complete);
-      cu->flush_all();
-      EXPECT_EQ(memory.read32(scratch_base), 0x73100000u);
-      EXPECT_EQ(memory.read32(scratch_base + stride), 0x93500000u);
-      EXPECT_EQ(memory.read32(scratch_base + 4), 0xa5a5a5a5u);
-      EXPECT_EQ(memory.read32(global_address), 0x73100001u);
-      EXPECT_EQ(memory.read32(global_address + 4), 0x93500001u);
-      EXPECT_EQ(memory.read32(global_address + stride), 0xa5a5a5a5u);
-      // Compiler spills mix generic pointers with the queue's private V#.
-      const auto sb = wf->sgpr_alloc().base;
-      cu->write_sgpr(sb, scratch_base);
-      cu->write_sgpr(sb + 1, 0x80000000u);
-      cu->write_sgpr(sb + 2, 0x100000u);
-      cu->write_sgpr(sb + 3, (0x21c14facu & ~(3u << 21)) | ((wave_size == 32 ? 2u : 3u) << 21));
-      wf->set_exec(1);
-      const auto buffer_words = arch == ROCJITSU_CODE_ARCH_RDNA1
-                                    ? rdna1::build_mubuf(rdna1::kBufferLoadDwordx2,
-                                                         {.vdata = 2, .srsrc = 0, .soffset = 128})
-                                    : rdna2::build_mubuf(rdna2::kBufferLoadDwordx2,
-                                                         {.vdata = 2, .srsrc = 0, .soffset = 128});
-      auto load = std::unique_ptr<Instruction>(decode_valid(*decoder, buffer_words.data()));
-      ASSERT_NE(load, nullptr);
-      ASSERT_TRUE(cu->execute_instruction(load.get(), *wf).succeeded());
-      EXPECT_EQ(pipeline.issue(load.release(), *wf), amdgpu::VmAccessOutcome::Complete);
-      EXPECT_EQ(cu->read_vgpr(vb + 2, 0), 0x73100000u);
-      EXPECT_EQ(cu->read_vgpr(vb + 3, 0), 0x93500000u);
-      wf->halt();
     }
   }
 }
