@@ -603,6 +603,22 @@ TEST_F(TensorDmaRaceTest, TransferIsCheckedAgainstPendingLdsAccesses) {
   EXPECT_NE(report.find("wave=0 lane=-1"), std::string::npos) << report;
 }
 
+TEST_F(TensorDmaRaceTest, StoreIsCheckedAgainstPendingLdsWrites) {
+  EXPECT_FALSE(ds_write(0, 36));
+  const size_t previous = sink->str().size();
+  EXPECT_TRUE(tensor_store(0, {{.address = 32, .bytes = 16}}));
+  const std::string report = sink->str().substr(previous);
+  EXPECT_NE(report.find("type=LDS access=read"), std::string::npos) << report;
+  EXPECT_NE(report.find("wave=0 lane=-1"), std::string::npos) << report;
+  EXPECT_NE(report.find("tensor_store_from_lds"), std::string::npos) << report;
+}
+
+TEST_F(TensorDmaRaceTest, StoreAcceptsCompletedLdsWrites) {
+  EXPECT_FALSE(ds_write(0, 36));
+  execute_wait(*fixture.plugin_group_, *waves[0], cdna5::build_sopp(cdna5::kSWaitDscntSopp)[0]);
+  EXPECT_FALSE(tensor_store(0, {{.address = 32, .bytes = 16}}));
+}
+
 TEST_F(TensorDmaRaceTest, RaceFoundByTheTransferIsReportedAtItsInstruction) {
   const std::string report = tensor_load_racing_an_older_read();
   EXPECT_NE(report.find(std::format("==>  0x{:x}  tensor_load_to_lds", kTensorPc)),
