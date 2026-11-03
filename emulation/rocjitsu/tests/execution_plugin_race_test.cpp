@@ -560,17 +560,27 @@ protected:
   }
 };
 
-TEST_F(TensorDmaRaceTest, LoadIsAnLdsWriteRetiredByTensorcntAndBarrier) {
+// Keep waited and unwaited probes in separate fixtures: a prior race involving
+// the tensor instruction would suppress another report and could hide failed retirement.
+TEST_F(TensorDmaRaceTest, LoadIsAnLdsWriteBeforeSynchronization) {
   tensor_load(0, {{.address = 0, .bytes = 16}});
   EXPECT_TRUE(ds_read(1, 4));
+}
+
+TEST_F(TensorDmaRaceTest, LoadIsAnLdsWriteRetiredByTensorcntAndBarrier) {
+  tensor_load(0, {{.address = 0, .bytes = 16}});
   wait_tensorcnt(0, 0);
   barrier();
   EXPECT_FALSE(ds_read(1, 8));
 }
 
-TEST_F(TensorDmaRaceTest, StoreIsAnLdsReadRetiredByTensorcntAndBarrier) {
+TEST_F(TensorDmaRaceTest, StoreIsAnLdsReadBeforeSynchronization) {
   tensor_store(0, {{.address = 32, .bytes = 16}});
   EXPECT_TRUE(ds_write(1, 40));
+}
+
+TEST_F(TensorDmaRaceTest, StoreIsAnLdsReadRetiredByTensorcntAndBarrier) {
+  tensor_store(0, {{.address = 32, .bytes = 16}});
   wait_tensorcnt(0, 0);
   barrier();
   EXPECT_FALSE(ds_write(1, 44));
