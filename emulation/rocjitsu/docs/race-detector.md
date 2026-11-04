@@ -517,7 +517,11 @@ gfx1151, using absolute paths from this source tree. The original
   only through wait-counter instructions and `s_barrier`. A consumer that is
   correctly synchronized through the barrier cell is therefore reported as
   racing with the tensor load. These reports are false positives, not missing
-  coverage.
+  coverage. The emulator also performs a descriptor-requested arrival when a
+  tensor store completes, so a wave that waits for that phase and then
+  overwrites the store's source bytes is likewise reported. The CDNA5 ISA lets
+  any tensor operation request the arrival (10.11.3) but describes it only for
+  loads (11.2.2.1); arrival after a store has not been confirmed on hardware.
 
 - **NULL tensor descriptors**: like the emulator, the detector counts a NULL
   descriptor (`count = 0`) on `tensorcnt`. That is an emulator assumption:
