@@ -849,11 +849,13 @@ RunStats run_input(std::span<const uint8_t> input) {
   uint64_t completed_modes = 0;
   uint64_t budget_limited_modes = 0;
   uint64_t terminal_faulted_modes = 0;
+  uint64_t primary_stalled_modes = 0;
   uint64_t instructions = 0;
   for (const ModeResult &result : results) {
     completed_modes += mode_complete(result);
     budget_limited_modes += budget_limited(result);
     terminal_faulted_modes += result.terminal_faulted;
+    primary_stalled_modes += primary_stalled(result);
     instructions += result.instructions;
   }
 
@@ -865,6 +867,7 @@ RunStats run_input(std::span<const uint8_t> input) {
       .completed_modes = completed_modes,
       .budget_limited_modes = budget_limited_modes,
       .terminal_faulted_modes = terminal_faulted_modes,
+      .primary_stalled_modes = primary_stalled_modes,
       .instructions = instructions,
       .packets = scenario.packets,
       .workgroups = workgroups,

@@ -31,6 +31,7 @@ struct RunStats {
   uint64_t completed_modes = 0;         ///< Modes completing every submitted packet.
   uint64_t budget_limited_modes = 0;    ///< Modes reaching the simulated tick budget.
   uint64_t terminal_faulted_modes = 0;  ///< Modes observing a terminal queue fault.
+  uint64_t primary_stalled_modes = 0;   ///< Modes stopping with an active primary and no work.
   uint64_t instructions = 0;            ///< Wave instructions observed across all modes.
   uint64_t packets = 0;                 ///< AQL packets submitted per input.
   uint64_t workgroups = 0;              ///< Workgroups submitted per input.

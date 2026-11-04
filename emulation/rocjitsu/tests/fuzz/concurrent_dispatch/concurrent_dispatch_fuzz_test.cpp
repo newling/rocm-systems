@@ -276,6 +276,8 @@ TEST(ConcurrentDispatchFuzzTest, StoppedRawKernelIsOrdinaryAcrossWorkerModes) {
   const RunStats stats = run_input(input);
   EXPECT_EQ(stats.differential_inputs, 0u);
   EXPECT_EQ(stats.completed_modes, 0u);
+  // The halted wave keeps its dispatch pending, so every finite run stalls.
+  EXPECT_EQ(stats.primary_stalled_modes, stats.modes);
 }
 
 TEST(ConcurrentDispatchFuzzTest, FatalRawKernelIgnoresPostExitProgress) {
@@ -317,13 +319,15 @@ TEST(ConcurrentDispatchFuzzTest, TerminallyFaultedRawKernelIgnoresRetirementProg
   }
 }
 
-TEST(ConcurrentDispatchFuzzTest, TerminalFaultReleasesPrimaryAcrossWorkerModes) {
+TEST(ConcurrentDispatchFuzzTest, TerminalFaultReleasesPrimaryWithoutPublishingCompletion) {
   const RunStats stats = run_input(faulting_flat_store_input());
   EXPECT_EQ(stats.differential_inputs, 0u);
   EXPECT_EQ(stats.completed_modes, 0u);
   EXPECT_EQ(stats.budget_limited_modes, 0u);
   EXPECT_EQ(stats.terminal_faulted_modes, stats.modes);
+  EXPECT_EQ(stats.primary_stalled_modes, 0u);
   EXPECT_EQ(stats.budget_limited_inputs, 0u);
+  EXPECT_EQ(stats.incomplete_inputs, 1u);
 }
 
 TEST(ConcurrentDispatchFuzzTest, PrimaryLifecycleOracleRespectsCancellationBoundary) {
@@ -359,15 +363,6 @@ TEST(ConcurrentDispatchFuzzTest, BudgetCountersRequireNonFaultTickExhaustion) {
   EXPECT_EQ(stats.budget_limited_inputs, 1u);
 }
 
-TEST(ConcurrentDispatchFuzzTest, TerminallyFaultedPacketDoesNotPublishCompletion) {
-  const RunStats stats = run_input(faulting_flat_store_input());
-  EXPECT_EQ(stats.differential_inputs, 0u);
-  EXPECT_EQ(stats.completed_modes, 0u);
-  EXPECT_EQ(stats.budget_limited_modes, 0u);
-  EXPECT_EQ(stats.terminal_faulted_modes, stats.modes);
-  EXPECT_EQ(stats.incomplete_inputs, 1u);
-}
-
 TEST(ConcurrentDispatchFuzzTest, TerminalFaultDropsBlockedSuccessorAndReleasesPrimary) {
   const RunStats stats = run_input(faulting_flat_store_input(kBarrierBit, 1));
   EXPECT_EQ(stats.packets, 2u);
@@ -375,6 +370,7 @@ TEST(ConcurrentDispatchFuzzTest, TerminalFaultDropsBlockedSuccessorAndReleasesPr
   EXPECT_EQ(stats.completed_modes, 0u);
   EXPECT_EQ(stats.budget_limited_modes, 0u);
   EXPECT_EQ(stats.terminal_faulted_modes, stats.modes);
+  EXPECT_EQ(stats.primary_stalled_modes, 0u);
   EXPECT_EQ(stats.incomplete_inputs, 1u);
 }
 

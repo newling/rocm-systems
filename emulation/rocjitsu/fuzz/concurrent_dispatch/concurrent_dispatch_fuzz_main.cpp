@@ -66,6 +66,7 @@ void print_stats(const RunStats &stats) {
             << ",\"modes\":" << stats.modes << ",\"completed_modes\":" << stats.completed_modes
             << ",\"budget_limited_modes\":" << stats.budget_limited_modes
             << ",\"terminal_faulted_modes\":" << stats.terminal_faulted_modes
+            << ",\"primary_stalled_modes\":" << stats.primary_stalled_modes
             << ",\"instructions\":" << stats.instructions << ",\"packets\":" << stats.packets
             << ",\"workgroups\":" << stats.workgroups << ",\"workitems\":" << stats.workitems
             << ",\"kernel_bytes\":" << stats.kernel_bytes
@@ -86,6 +87,7 @@ void accumulate_stats(RunStats &total, const RunStats &stats) {
   total.completed_modes += stats.completed_modes;
   total.budget_limited_modes += stats.budget_limited_modes;
   total.terminal_faulted_modes += stats.terminal_faulted_modes;
+  total.primary_stalled_modes += stats.primary_stalled_modes;
   total.instructions += stats.instructions;
   total.packets += stats.packets;
   total.workgroups += stats.workgroups;

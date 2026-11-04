@@ -78,6 +78,7 @@ foreach(
         completed_modes
         budget_limited_modes
         terminal_faulted_modes
+        primary_stalled_modes
         instructions
         packets
         workgroups
