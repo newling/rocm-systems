@@ -7,14 +7,22 @@
 #include "rocjitsu/isa/arch/amdgpu/generated/cdna3/opcodes.h"
 #include "rocjitsu/isa/arch/amdgpu/generated/cdna5/builders.h"
 #include "rocjitsu/isa/arch/amdgpu/generated/cdna5/opcodes.h"
+#include "rocjitsu/isa/arch/amdgpu/generated/rdna3/builders.h"
+#include "rocjitsu/isa/arch/amdgpu/generated/rdna3/opcodes.h"
+#include "rocjitsu/isa/arch/amdgpu/generated/rdna3/operand_types.h"
+#include "rocjitsu/isa/decoder.h"
+#include "rocjitsu/isa/instruction.h"
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <thread>
 #include <vector>
@@ -70,6 +78,101 @@ TEST(ExecutionFuzzTargetTest, GeneratedEncodingsReachExecutionAcrossTargets) {
   }
 }
 
+TEST(ExecutionFuzzTargetTest, RandomMixRunsGeneratedKernelsAcrossTargets) {
+  for (uint8_t index = 0; index < static_cast<uint8_t>(FuzzTarget::Count); ++index) {
+    const FuzzTarget target = *indexed_target(index);
+    SCOPED_TRACE(target_name(target));
+    for (uint64_t seed : {25u, 26u, 73u, 121u}) {
+      SCOPED_TRACE(seed);
+      const std::vector<uint8_t> input = random_input(seed, kMaxInputSize, target);
+      EXPECT_EQ(input, generated_kernel_input(seed, kMaxInputSize, target));
+      testing::internal::CaptureStderr();
+      const RunStats stats = run_input(input, std::nullopt, nullptr, AsyncMode::Disabled, 1);
+      const std::string diagnostics = testing::internal::GetCapturedStderr();
+      EXPECT_EQ(diagnostics.find("memory-wait:"), std::string::npos) << diagnostics;
+      EXPECT_EQ(diagnostics.find("xcnt-wait:"), std::string::npos) << diagnostics;
+      EXPECT_GT(stats.executed, 10u);
+      EXPECT_EQ(stats.inputs_halted, 1u);
+      EXPECT_EQ(stats.inputs_stopped, 0u);
+      EXPECT_EQ(stats.budget_exhausted, 0u);
+    }
+  }
+}
+
+TEST(ExecutionFuzzInputTest, GeneratedKernelBranchTargetsAndFlatWaits) {
+  constexpr uint32_t kGfx11Wait = rdna3::build_sopp(rdna3::kSWaitcntSopp)[0];
+  constexpr std::array kGfx11StoreWaits = {
+      rdna3::build_sopk(rdna3::kSWaitcntVscntSopk, {.sdst = rdna3::OPR_SDST_NULL})[0], kGfx11Wait};
+  constexpr std::array kGfx1250StoreWaits = {cdna5::build_sopp(cdna5::kSWaitStorecntDscntSopp)[0]};
+  struct Case {
+    FuzzTarget target;
+    rj_code_arch_t arch;
+    uint32_t load_wait;
+    std::span<const uint32_t> store_waits;
+  };
+  const std::array cases = {
+      Case{FuzzTarget::Gfx1100, ROCJITSU_CODE_ARCH_RDNA3, kGfx11Wait, kGfx11StoreWaits},
+      Case{FuzzTarget::Gfx1250, ROCJITSU_CODE_ARCH_CDNA5,
+           cdna5::build_sopp(cdna5::kSWaitLoadcntDscntSopp)[0], kGfx1250StoreWaits},
+  };
+  for (const Case &test_case : cases) {
+    SCOPED_TRACE(target_name(test_case.target));
+    std::unique_ptr<Decoder> decoder = Decoder::create(test_case.arch);
+    ASSERT_TRUE(decoder);
+    bool forward = false;
+    bool backward = false;
+    bool flat_load = false;
+    bool flat_store = false;
+    for (uint64_t seed = 0; seed != 12; ++seed) {
+      SCOPED_TRACE(seed);
+      const std::vector<uint8_t> input =
+          generated_kernel_input(seed, kMaxInputSize, test_case.target);
+      std::vector<uint32_t> words((input.size() - kHeaderSize) / sizeof(uint32_t));
+      for (size_t i = 0; i < words.size(); ++i)
+        for (unsigned byte = 0; byte < sizeof(uint32_t); ++byte)
+          words[i] |= uint32_t{input[kHeaderSize + i * sizeof(uint32_t) + byte]} << (8 * byte);
+      std::vector<int64_t> instruction_offsets;
+      std::vector<int64_t> branch_targets;
+      bool terminated = false;
+      for (size_t pc = 0; pc < words.size();) {
+        const DecodeResult result = decoder->decode_window(std::span(words).subspan(pc));
+        ASSERT_TRUE(result.succeeded()) << pc;
+        const Instruction &instruction = *result.value();
+        instruction_offsets.push_back(pc);
+        if (instruction.flags() & PROGRAM_TERMINATOR) {
+          terminated = true;
+          break;
+        }
+        if (instruction.is_branch()) {
+          const int16_t displacement = std::bit_cast<int16_t>(static_cast<uint16_t>(words[pc]));
+          const int64_t target = static_cast<int64_t>(pc) + 1 + displacement;
+          forward |= target > static_cast<int64_t>(pc);
+          backward |= target < static_cast<int64_t>(pc);
+          branch_targets.push_back(target);
+        }
+        pc += instruction.size() / sizeof(uint32_t);
+        if (instruction.mnemonic() == "flat_load_b32") {
+          ASSERT_LT(pc, words.size());
+          EXPECT_EQ(words[pc], test_case.load_wait);
+          flat_load = true;
+        } else if (instruction.mnemonic() == "flat_store_b32") {
+          ASSERT_LE(pc + test_case.store_waits.size(), words.size());
+          EXPECT_TRUE(std::ranges::equal(std::span(words).subspan(pc, test_case.store_waits.size()),
+                                         test_case.store_waits));
+          flat_store = true;
+        }
+      }
+      EXPECT_TRUE(terminated);
+      for (int64_t target : branch_targets)
+        EXPECT_NE(std::ranges::find(instruction_offsets, target), instruction_offsets.end());
+    }
+    EXPECT_TRUE(forward);
+    EXPECT_TRUE(backward);
+    EXPECT_TRUE(flat_load);
+    EXPECT_TRUE(flat_store);
+  }
+}
+
 TEST(ExecutionFuzzInputTest, GeneratedInputsRespectEverySizeAndTarget) {
   for (uint8_t index = 0; index < static_cast<uint8_t>(FuzzTarget::Count); ++index) {
     const FuzzTarget target = *indexed_target(index);
@@ -84,7 +187,9 @@ TEST(ExecutionFuzzInputTest, GeneratedInputsRespectEverySizeAndTarget) {
         EXPECT_EQ(input.front(), static_cast<uint8_t>(target));
         EXPECT_EQ(input, random_input(seed, size, target));
         if (size >= kHeaderSize) {
-          EXPECT_EQ(input[1] & ~(kAsyncSelectBit | kConcurrentIssuerMask | kFullExecMaskBit), 0);
+          EXPECT_EQ(input[1] & ~(kAsyncSelectBit | kConcurrentIssuerMask | kFullExecMaskBit |
+                                 kWaitCheckingBit | kCacheMemoryBit),
+                    0);
         }
       }
     }
@@ -97,7 +202,7 @@ TEST(ExecutionFuzzInputTest, GeneratedInputsRejectInvalidSizes) {
 }
 
 TEST(ExecutionFuzzInputTest, ArbitraryInputsPreserveByteStreamAcrossSizes) {
-  const std::vector<uint8_t> expected = {0x02, 0x00, 0xaf, 0xf4, 0x4f, 0xec, 0x9b, 0xea};
+  const std::vector<uint8_t> expected = {0x02, kCacheMemoryBit, 0xaf, 0xf4, 0x4f, 0xec, 0x9b, 0xea};
   EXPECT_EQ(random_input(0, expected.size(), FuzzTarget::Gfx942), expected);
 
   const std::vector<uint8_t> full_input = random_input(0, kMaxInputSize, FuzzTarget::Gfx942);
@@ -126,6 +231,45 @@ TEST(ExecutionFuzzInputTest, GeneratedInstructionsPreservePrefixesAcrossSizes) {
         differing_bits += std::popcount(static_cast<unsigned>(input[byte] ^ full_input[byte]));
       EXPECT_LE(differing_bits, 2u);
     }
+  }
+}
+
+TEST(ExecutionFuzzInputTest, EntryMutationsStayWithinThePrefix) {
+  constexpr size_t short_size = 64;
+  constexpr size_t mutation_end = kHeaderSize + 32;
+  bool saw_mutation = false;
+  for (uint64_t seed : {258u, 259u, 261u, 262u, 263u}) {
+    SCOPED_TRACE(seed);
+    const std::vector<uint8_t> small = random_input(seed, short_size, FuzzTarget::Gfx942);
+    const std::vector<uint8_t> large = random_input(seed, kMaxInputSize, FuzzTarget::Gfx942);
+    saw_mutation |= !std::equal(small.begin() + kHeaderSize, small.begin() + mutation_end,
+                                large.begin() + kHeaderSize);
+    EXPECT_TRUE(
+        std::equal(small.begin() + mutation_end, small.end(), large.begin() + mutation_end));
+  }
+  EXPECT_TRUE(saw_mutation);
+}
+
+TEST(ExecutionFuzzInputTest, WaitCheckingBitEnablesDiagnosticsOnReplay) {
+  std::vector<uint8_t> input{static_cast<uint8_t>(FuzzTarget::Gfx1250), 0};
+  const auto append = [&](auto words) {
+    for (const uint32_t word : words)
+      for (unsigned byte = 0; byte < sizeof(word); ++byte)
+        input.push_back(static_cast<uint8_t>(word >> (8 * byte)));
+  };
+  append(cdna5::build_smem(cdna5::kSLoadB32Smem, {.sbase = 0, .sdata = 20, .soffset = 124}));
+  append(cdna5::build_sop1(cdna5::kSMovB32Sop1, {.ssrc0 = 20, .sdst = 21}));
+  append(cdna5::build_sop1(cdna5::kSMovB32Sop1, {.ssrc0 = 128, .sdst = 0}));
+
+  for (bool check_waits : {false, true}) {
+    input[1] = check_waits ? kWaitCheckingBit : 0;
+    testing::internal::CaptureStderr();
+    const RunStats stats = run_input(input, std::nullopt, nullptr, AsyncMode::Disabled, 1);
+    const std::string diagnostics = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(diagnostics.find("memory-wait:") != std::string::npos, check_waits) << diagnostics;
+    EXPECT_EQ(diagnostics.find("xcnt-wait:") != std::string::npos, check_waits) << diagnostics;
+    EXPECT_EQ(stats.executed, 4u);
+    EXPECT_EQ(stats.inputs_halted, 1u);
   }
 }
 
@@ -192,11 +336,16 @@ TEST(ExecutionFuzzInputTest, InitialAddressPairsReachMappedMemory) {
         append(cdna3::build_sopp(cdna3::kSWaitcntSopp));
         append(cdna3::build_sopp(cdna3::kSNopSopp));
       }
-      const RunStats stats = run_input(input, target, nullptr, AsyncMode::Disabled, 1);
-      EXPECT_EQ(stats.executed, 4u);
-      EXPECT_EQ(stats.inputs_halted, 1u);
-      EXPECT_EQ(stats.inputs_stopped, 0u);
-      EXPECT_EQ(stats.budget_exhausted, 0u);
+      for (uint8_t mode : {uint8_t{0}, kCacheMemoryBit}) {
+        SCOPED_TRACE(mode);
+        input[1] = mode;
+        const RunStats stats = run_input(input, target, nullptr, AsyncMode::Disabled, 1);
+        EXPECT_EQ(stats.executed, 4u);
+        EXPECT_EQ(stats.inputs_halted, 1u);
+        EXPECT_EQ(stats.inputs_stopped, 0u);
+        EXPECT_EQ(stats.budget_exhausted, 0u);
+        EXPECT_EQ(stats.l2_backing_reads != 0, mode == kCacheMemoryBit);
+      }
     }
   }
 }
@@ -253,6 +402,10 @@ TEST(ExecutionFuzzInputTest, ModeByteDoesNotRewriteAsyncWmmaPrefix) {
     ASSERT_GE(input.size(), 18u);
     EXPECT_EQ(input[17], 0x1du);
   }
+  constexpr size_t wmma_prefix_end = kHeaderSize + 16;
+  const std::vector<uint8_t> wmma_prefix = random_input(257, wmma_prefix_end, FuzzTarget::Gfx1250);
+  const std::vector<uint8_t> entry_mutated = random_input(257, 32, FuzzTarget::Gfx1250);
+  EXPECT_TRUE(std::ranges::equal(wmma_prefix, std::span(entry_mutated).first(wmma_prefix_end)));
 }
 
 TEST(ExecutionFuzzInputTest, TargetOverrideKeepsInputLayout) {
