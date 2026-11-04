@@ -31,11 +31,15 @@
 
 /// @brief Small-model x86-64 ELF uses raw function addresses and can resolve signed
 /// 32-bit code offsets at link time.
+/// @details A build may predefine this as 0 to compile the portable fallback on such a
+/// host. Predefining it as 1 elsewhere is unsupported.
+#ifndef RJ_HOST_HAS_X86_64_ELF_REL32
 #if RJ_HOST_ARCH_X86_64 && defined(__ELF__) && defined(__code_model_small__) &&                    \
     defined(__LP64__) && (defined(__GNUC__) || defined(__clang__))
 #define RJ_HOST_HAS_X86_64_ELF_REL32 1
 #else
 #define RJ_HOST_HAS_X86_64_ELF_REL32 0
+#endif
 #endif
 
 /// @brief Individual ISA features remain independent, so a partial target does

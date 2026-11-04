@@ -54,6 +54,22 @@ function(rj_add_split_amdgpu_isa_library arch)
     rj_add_object_library(${_target}_model ${_model_sources})
     rj_add_object_library(${_target}_exec ${_execution_sources})
 
+    # Hosts that use relative decoder tables never compile the switch dispatch
+    # used elsewhere. Compile it here so changes cannot break it unnoticed.
+    if(
+        CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$"
+        AND CMAKE_EXECUTABLE_FORMAT STREQUAL "ELF"
+    )
+        rj_add_object_library(
+            ${_target}_portable_decoder_check
+            "${_generated_dir}/decoder.cpp"
+        )
+        target_compile_definitions(
+            ${_target}_portable_decoder_check
+            PRIVATE RJ_HOST_HAS_X86_64_ELF_REL32=0
+        )
+    endif()
+
     add_library(${_target} INTERFACE)
     target_sources(
         ${_target}
