@@ -707,6 +707,17 @@ TEST_F(TensorDmaRaceTest, DtlAfterAnotherWavesDsReadIsRetiredIsSafe) {
   EXPECT_FALSE(dtl_write(0, 4));
 }
 
+// TODO: The 6-bit TENSORcnt holds at most 63 transfers, so issuing the 64th
+// stalls until the first completes, and reading the first transfer's bytes is
+// then safe. The detector does not model this backpressure and reports a race.
+// Expect no race here once it does; see
+// https://github.com/ROCm/rocm-systems/issues/15036.
+TEST_F(TensorDmaRaceTest, FullTensorcntDoesNotYetRetireTheOldestTransfer) {
+  for (uint32_t transfer = 0; transfer < 64; ++transfer)
+    EXPECT_FALSE(tensor_load(0, {{.address = 4 * transfer, .bytes = 4}}));
+  EXPECT_TRUE(ds_read(0, 0));
+}
+
 TEST_F(TensorDmaRaceTest, StoreAfterDscntIsSafe) {
   EXPECT_FALSE(ds_write(0, 4));
   wait_dscnt(0);
