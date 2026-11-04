@@ -36,6 +36,7 @@ import os
 
 from dataclasses import dataclass, field as _field
 from collections import defaultdict
+from itertools import groupby
 from enum import Enum, auto
 
 from amdisa.gpuisa import (
@@ -18173,6 +18174,45 @@ inline void unpack_6bit(const uint32_t dwords[6], uint8_t vals[32]) {{
                 ],
             )
         ]
+
+        def table_definition(name: str, entries: list[str], size: int) -> cgen.Line:
+            assert len(entries) == size, f'{name} requires {size} decode entries'
+            lines = [f'RJ_BEGIN_DECODE_TABLE({name})']
+            slot = 0
+            for target, run in groupby(entries):
+                count = sum(1 for _ in run)
+                lines.append(f'RJ_DECODE_RUN({slot}, {count}, &{target});')
+                slot += count
+            lines.append('RJ_END_DECODE_TABLE()')
+            return cgen.Line('\n'.join(lines))
+
+        def table_dispatch(name: str, index: str, entries: list[str]) -> cgen.Line:
+            lines = [
+                '#if RJ_HOST_HAS_X86_64_ELF_REL32',
+                f'return {name}[{index}](opcode, emit_error);',
+                '#else',
+                f'switch (static_cast<unsigned>({index})) {{',
+            ]
+            slots: dict[str, list[int]] = defaultdict(list)
+            for slot, target in enumerate(entries):
+                slots[target].append(slot)
+            # The opcode fields cover exactly the table. Use the most frequent
+            # target as the default to avoid emitting redundant case labels.
+            default = max(slots, key=lambda target: len(slots[target]))
+            for target, indices in slots.items():
+                if target != default:
+                    lines.extend(f'case {i}:' for i in indices)
+                    lines.append(f'return {target}(opcode, emit_error);')
+            lines.extend(
+                ['default:', f'return {default}(opcode, emit_error);', '}', '#endif']
+            )
+            return cgen.Line('\n'.join(lines))
+
+        def table_declaration(name: str, size: int) -> cgen.Statement:
+            return cgen.Statement(
+                f'static const amdgpu::DecodeTable<DecodeFunc, {size}> {name}'
+            )
+
         class_impl = []
         class_members = [
             cgen.Line('public:'),
@@ -18184,10 +18224,6 @@ inline void unpack_6bit(const uint32_t dwords[6], uint8_t vals[32]) {{
                 ],
             ),
             cgen.Line('private:'),
-            cgen.Statement(
-                'using DecodeFunc = DecodeResult(*)(const MachineInst *, '
-                'const DecodeErrorEmitter &)'
-            ),
             cgen.FunctionDeclaration(
                 cgen.Value('static DecodeResult', 'decodeInvalid'),
                 [
@@ -18196,7 +18232,7 @@ inline void unpack_6bit(const uint32_t dwords[6], uint8_t vals[32]) {{
                 ],
             ),
         ]
-        decode_body = []
+        decode_body = cgen.Block()
         if self._supports_cdna5_scaled_wmma_vop3px2():
             class_impl.append(
                 cgen.Line(self._emit_cdna5_scaled_wmma_vop3px2_decoder_helpers())
@@ -18221,15 +18257,8 @@ inline void unpack_6bit(const uint32_t dwords[6], uint8_t vals[32]) {{
                     '  }\n'
                 )
             )
-        decode_body.extend(
-            [
-                cgen.Statement(
-                    'Sop1MachineInst op = std::bit_cast<decltype(op)>(*opcode)'
-                ),
-                cgen.Statement(
-                    'return primary_decode_table[op.encoding](opcode, emit_error)'
-                ),
-            ]
+        decode_body.append(
+            cgen.Statement('Sop1MachineInst op = std::bit_cast<decltype(op)>(*opcode)')
         )
         decode_table_funcs = [
             cgen.FunctionBody(
@@ -18240,7 +18269,7 @@ inline void unpack_6bit(const uint32_t dwords[6], uint8_t vals[32]) {{
                         cgen.Value('const DecodeErrorEmitter &', 'emit_error'),
                     ],
                 ),
-                cgen.Block(decode_body),
+                decode_body,
             ),
             cgen.FunctionBody(
                 cgen.FunctionDeclaration(
@@ -18263,11 +18292,8 @@ inline void unpack_6bit(const uint32_t dwords[6], uint8_t vals[32]) {{
                 ),
             ),
         ]
-        decode_tables = [
-            cgen.Statement(
-                f'static const std::array<DecodeFunc, {pow(2, self.isa_spec.profile.max_enc_bits)}> primary_decode_table'
-            )
-        ]
+        primary_table_size = 1 << self.isa_spec.profile.max_enc_bits
+        decode_tables = [table_declaration('primary_decode_table', primary_table_size)]
         decode_table_entries = []
         sub_decode_table_entries = []
         decode_funcs_found = set()
@@ -18449,7 +18475,7 @@ inline void unpack_6bit(const uint32_t dwords[6], uint8_t vals[32]) {{
         for _primary_index, dte in enumerate(self.isa_spec.primary_decode_table):
             if _primary_index in _custom_primary_decode_funcs:
                 decode_table_entries.append(
-                    f'&DecoderImpl::{_custom_primary_decode_funcs[_primary_index]},'
+                    f'DecoderImpl::{_custom_primary_decode_funcs[_primary_index]}'
                 )
                 continue
             if dte is not None:
@@ -18457,9 +18483,9 @@ inline void unpack_6bit(const uint32_t dwords[6], uint8_t vals[32]) {{
                     dte.is_primary and dte.decode_func in distributed_factory_names
                 )
                 if primary_factory_is_distributed:
-                    decode_table_entries.append(f'&detail::{dte.decode_func},')
+                    decode_table_entries.append(f'detail::{dte.decode_func}')
                 else:
-                    decode_table_entries.append(f'&DecoderImpl::{dte.decode_func},')
+                    decode_table_entries.append(f'DecoderImpl::{dte.decode_func}')
                 if dte.decode_func not in decode_funcs_found:
                     decode_funcs_found.add(dte.decode_func)
                     func_decl = cgen.FunctionDeclaration(
@@ -18498,33 +18524,23 @@ inline void unpack_6bit(const uint32_t dwords[6], uint8_t vals[32]) {{
                             # GFX10 buffer encodings split the high opcode bit
                             # into OPM (in word 1 for MTBUF).
                             opcode_expr += f' | (op.opm << {fields["op"].bit_cnt})'
+                        sub_decode_body = cgen.Block(
+                            [
+                                cgen.Value(
+                                    f'{dte.enc.fmt_enc_name}::OpEncoding',
+                                    'op = *reinterpret_cast<const decltype(op) *>(opcode)',
+                                )
+                            ]
+                        )
                         decode_table_funcs.append(
-                            cgen.FunctionBody(
-                                func_decl,
-                                cgen.Block(
-                                    [
-                                        cgen.Value(
-                                            f'{dte.enc.fmt_enc_name}::OpEncoding',
-                                            'op = *reinterpret_cast<const decltype(op) *>(opcode)',
-                                        ),
-                                        cgen.Statement(
-                                            f'return {dte.sub_decode_table}[{opcode_expr}](opcode, emit_error)'
-                                        ),
-                                    ]
-                                ),
-                            )
+                            cgen.FunctionBody(func_decl, sub_decode_body)
                         )
                         decode_tables.append(
-                            cgen.Statement(
-                                f'static const std::array<DecodeFunc, {len(dte.sub_decode_funcs)}> {dte.sub_decode_table}'
+                            table_declaration(
+                                dte.sub_decode_table, len(dte.sub_decode_funcs)
                             )
                         )
-                        sub_decode_table_entries.append(
-                            cgen.Line(
-                                f'const std::array<DecoderImpl::DecodeFunc, {len(dte.sub_decode_funcs)}> DecoderImpl::{dte.sub_decode_table} = {{'
-                            )
-                        )
-                        sub_decode_table_entry_str = []
+                        sub_decode_targets = []
                         sub_decode_funcs_found = set()
                         for fn in dte.sub_decode_funcs:
                             sub_factory_is_distributed = (
@@ -18589,15 +18605,21 @@ inline void unpack_6bit(const uint32_t dwords[6], uint8_t vals[32]) {{
                                         ),
                                     )
                             if sub_factory_is_distributed:
-                                sub_decode_table_entry_str.append(f'&detail::{fn},')
+                                sub_decode_targets.append(f'detail::{fn}')
                             else:
-                                sub_decode_table_entry_str.append(
-                                    f'&DecoderImpl::{fn},'
-                                )
-                        sub_decode_table_entries.append(
-                            cgen.Line(''.join(sub_decode_table_entry_str))
+                                sub_decode_targets.append(f'DecoderImpl::{fn}')
+                        sub_decode_body.append(
+                            table_dispatch(
+                                dte.sub_decode_table, opcode_expr, sub_decode_targets
+                            )
                         )
-                        sub_decode_table_entries.append(cgen.Line('};'))
+                        sub_decode_table_entries.append(
+                            table_definition(
+                                dte.sub_decode_table,
+                                sub_decode_targets,
+                                len(dte.sub_decode_funcs),
+                            )
+                        )
                     if not primary_factory_is_distributed:
                         class_members.append(
                             cgen.FunctionDeclaration(
@@ -18615,9 +18637,21 @@ inline void unpack_6bit(const uint32_t dwords[6], uint8_t vals[32]) {{
                         )
                     class_members.extend(sub_decode_func_decls)
             else:
-                decode_table_entries.append('&DecoderImpl::decodeInvalid,')
-        decode_table_entries = ''.join(decode_table_entries)
+                decode_table_entries.append('DecoderImpl::decodeInvalid')
+        decode_body.append(
+            table_dispatch('primary_decode_table', 'op.encoding', decode_table_entries)
+        )
+        class_members.append(cgen.Line('#if RJ_HOST_HAS_X86_64_ELF_REL32'))
+        class_members.append(
+            cgen.Statement(
+                'using DecodeFunc = DecodeResult(*)(const MachineInst *, '
+                'const DecodeErrorEmitter &)'
+            )
+        )
         class_members.extend(decode_tables)
+        class_members.append(
+            cgen.Line('  [[gnu::used]] static void emitTables();\n#endif')
+        )
         detail_decls = '\n'.join(
             f'DecodeResult {factory_name}'
             '(const MachineInst *opcode, const DecodeErrorEmitter &emit_error);'
@@ -18625,9 +18659,17 @@ inline void unpack_6bit(const uint32_t dwords[6], uint8_t vals[32]) {{
         )
         class_impl[0:0] = [
             cgen.Line(
+                '#if RJ_HOST_HAS_X86_64_ELF_REL32\n'
+                '// The assembler needs locally bound factory addresses even in PIC builds.\n'
+                '#pragma GCC visibility push(hidden)\n#endif'
+            ),
+            cgen.Line(
                 'namespace detail {\n' f'{detail_decls}\n' '} // namespace detail'
             ),
             cgen.Struct('DecoderImpl', class_members),
+            cgen.Line(
+                '#if RJ_HOST_HAS_X86_64_ELF_REL32\n#pragma GCC visibility pop\n#endif'
+            ),
         ]
         decode_table_funcs.insert(
             0,
@@ -18647,12 +18689,16 @@ inline void unpack_6bit(const uint32_t dwords[6], uint8_t vals[32]) {{
         class_impl.extend(decode_table_funcs)
         class_impl.append(
             cgen.Line(
-                f'const std::array<DecoderImpl::DecodeFunc, {pow(2, self.isa_spec.profile.max_enc_bits)}> DecoderImpl::primary_decode_table = {{'
+                '#if RJ_HOST_HAS_X86_64_ELF_REL32\nvoid DecoderImpl::emitTables() {'
             )
         )
-        class_impl.append(cgen.Line(decode_table_entries))
-        class_impl.append(cgen.Line('};'))
+        class_impl.append(
+            table_definition(
+                'primary_decode_table', decode_table_entries, primary_table_size
+            )
+        )
         class_impl.extend(sub_decode_table_entries)
+        class_impl.append(cgen.Line('}\n#endif'))
         class_def_file = CppFile(
             'decoder',
             self.out_path,
@@ -18676,6 +18722,7 @@ inline void unpack_6bit(const uint32_t dwords[6], uint8_t vals[32]) {{
             generated_dir_name=self.generated_dir_name,
         )
         decoder_impl_includes = [
+            ('rocjitsu/isa/arch/amdgpu/shared/decode_table.h', False),
             (
                 self.config.generated_include(self.generated_dir_name, 'decoder.h'),
                 False,
@@ -18708,7 +18755,7 @@ inline void unpack_6bit(const uint32_t dwords[6], uint8_t vals[32]) {{
                     False,
                 )
             )
-        decoder_impl_includes.extend([('array', True), ('bit', True), ('format', True)])
+        decoder_impl_includes.extend([('bit', True), ('format', True)])
         class_impl_file = CppFile(
             'decoder',
             self.out_path,

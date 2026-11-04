@@ -15,11 +15,21 @@
 #include <cstdint>
 #include <memory>
 
+// The ELF check reads the expected dispatch mode from this opcode's symbol name.
+#if defined(__ELF__) && defined(__x86_64__) && defined(__LP64__) &&                                \
+    defined(__code_model_small__) && (defined(__GNUC__) || defined(__clang__))
+#define RJ_TEST_S_NOP rj_test_expect_relative_decode_table
+#else
+#define RJ_TEST_S_NOP rj_test_expect_decode_switch
+#endif
+// The decode below must read the symbol even under LTO and section garbage collection.
+extern "C" const volatile uint32_t RJ_TEST_S_NOP = 0xBF800000u;
+
 namespace rocjitsu {
 namespace {
 
 TEST(ModelOnlyIsaTest, DecodesWithoutExecutionCallback) {
-  constexpr uint32_t kSNop = 0xBF800000u;
+  const uint32_t s_nop = RJ_TEST_S_NOP;
   constexpr uint32_t kVMovB32V0V1 = 0x7E000301u;
 
   const IsaTargetRegistry &registry = default_isa_target_registry();
@@ -37,7 +47,7 @@ TEST(ModelOnlyIsaTest, DecodesWithoutExecutionCallback) {
   ASSERT_NE(decoder, nullptr);
   EXPECT_EQ(Decoder::create(registry, ROCJITSU_CODE_ARCH_RDNA4), nullptr);
 
-  std::unique_ptr<Instruction> inst(decode_valid(*decoder, &kSNop));
+  std::unique_ptr<Instruction> inst(decode_valid(*decoder, &s_nop));
   ASSERT_NE(inst, nullptr);
   EXPECT_EQ(inst->mnemonic(), "s_nop");
   EXPECT_EQ(inst->execute, nullptr);

@@ -1533,12 +1533,10 @@ def test_nonempty_additions_document_generates_decoder_dispatch(tmp_path):
     )
 
     decoder = (output / 'isa' / 'cdna5' / 'decoder.cpp').read_text()
-    match = re.search(
-        r'DecoderImpl::sub_decode_sop1 = \{\s*(.*?)\s*\};', decoder, re.DOTALL
-    )
-    assert match is not None
-    entries = [entry.strip() for entry in match.group(1).split(',')]
-    assert entries[7] == '&detail::decodeSAdditionTestB32Sop1'
+    table = decoder.split('RJ_BEGIN_DECODE_TABLE(sub_decode_sop1)', 1)[1].split(
+        'RJ_END_DECODE_TABLE()', 1
+    )[0]
+    assert 'RJ_DECODE_RUN(7, 1, &detail::decodeSAdditionTestB32Sop1)' in table
 
 
 @pytest.mark.parametrize(

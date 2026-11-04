@@ -6,12 +6,17 @@
 
 #include "rocjitsu/isa/arch/amdgpu/generated/rdna2/decoder.h"
 #include "rocjitsu/isa/arch/amdgpu/generated/rdna2/vop3p.h"
-#include <array>
+#include "rocjitsu/isa/arch/amdgpu/shared/decode_table.h"
 #include <bit>
 #include <format>
 
 namespace rocjitsu {
 namespace rdna2 {
+
+#if RJ_HOST_HAS_X86_64_ELF_REL32
+// The assembler needs locally bound factory addresses even in PIC builds.
+#pragma GCC visibility push(hidden)
+#endif
 
 namespace detail {
 DecodeResult decodeBufferAtomicAddMubuf(const MachineInst *opcode,
@@ -1887,7 +1892,6 @@ public:
   static DecodeResult decode(const MachineInst *opcode, const DecodeErrorEmitter &emit_error);
 
 private:
-  using DecodeFunc = DecodeResult (*)(const MachineInst *, const DecodeErrorEmitter &);
   static DecodeResult decodeInvalid(const MachineInst *opcode,
                                     const DecodeErrorEmitter &emit_error);
   static DecodeResult subDecodeVopc(const MachineInst *opcode,
@@ -1917,22 +1921,30 @@ private:
                                     const DecodeErrorEmitter &emit_error);
   static DecodeResult subDecodeSmem(const MachineInst *opcode,
                                     const DecodeErrorEmitter &emit_error);
-  static const std::array<DecodeFunc, 512> primary_decode_table;
-  static const std::array<DecodeFunc, 256> sub_decode_vopc;
-  static const std::array<DecodeFunc, 256> sub_decode_vop1;
-  static const std::array<DecodeFunc, 256> sub_decode_sop1;
-  static const std::array<DecodeFunc, 128> sub_decode_sopc;
-  static const std::array<DecodeFunc, 128> sub_decode_sopp;
-  static const std::array<DecodeFunc, 4> sub_decode_vintrp;
-  static const std::array<DecodeFunc, 128> sub_decode_vop3p;
-  static const std::array<DecodeFunc, 1024> sub_decode_vop3;
-  static const std::array<DecodeFunc, 256> sub_decode_ds;
-  static const std::array<DecodeFunc, 128> sub_decode_flat;
-  static const std::array<DecodeFunc, 256> sub_decode_mubuf;
-  static const std::array<DecodeFunc, 16> sub_decode_mtbuf;
-  static const std::array<DecodeFunc, 256> sub_decode_mimg;
-  static const std::array<DecodeFunc, 256> sub_decode_smem;
+#if RJ_HOST_HAS_X86_64_ELF_REL32
+  using DecodeFunc = DecodeResult (*)(const MachineInst *, const DecodeErrorEmitter &);
+  static const amdgpu::DecodeTable<DecodeFunc, 512> primary_decode_table;
+  static const amdgpu::DecodeTable<DecodeFunc, 256> sub_decode_vopc;
+  static const amdgpu::DecodeTable<DecodeFunc, 256> sub_decode_vop1;
+  static const amdgpu::DecodeTable<DecodeFunc, 256> sub_decode_sop1;
+  static const amdgpu::DecodeTable<DecodeFunc, 128> sub_decode_sopc;
+  static const amdgpu::DecodeTable<DecodeFunc, 128> sub_decode_sopp;
+  static const amdgpu::DecodeTable<DecodeFunc, 4> sub_decode_vintrp;
+  static const amdgpu::DecodeTable<DecodeFunc, 128> sub_decode_vop3p;
+  static const amdgpu::DecodeTable<DecodeFunc, 1024> sub_decode_vop3;
+  static const amdgpu::DecodeTable<DecodeFunc, 256> sub_decode_ds;
+  static const amdgpu::DecodeTable<DecodeFunc, 128> sub_decode_flat;
+  static const amdgpu::DecodeTable<DecodeFunc, 256> sub_decode_mubuf;
+  static const amdgpu::DecodeTable<DecodeFunc, 16> sub_decode_mtbuf;
+  static const amdgpu::DecodeTable<DecodeFunc, 256> sub_decode_mimg;
+  static const amdgpu::DecodeTable<DecodeFunc, 256> sub_decode_smem;
+  [[gnu::used]] static void emitTables();
+#endif
 };
+
+#if RJ_HOST_HAS_X86_64_ELF_REL32
+#pragma GCC visibility pop
+#endif
 
 DecodeResult Decoder::decode(const MachineInst *opcode, const DecodeErrorEmitter &emit_error) {
   return DecoderImpl::decode(opcode, emit_error);
@@ -1940,7 +1952,502 @@ DecodeResult Decoder::decode(const MachineInst *opcode, const DecodeErrorEmitter
 
 DecodeResult DecoderImpl::decode(const MachineInst *opcode, const DecodeErrorEmitter &emit_error) {
   Sop1MachineInst op = std::bit_cast<decltype(op)>(*opcode);
+#if RJ_HOST_HAS_X86_64_ELF_REL32
   return primary_decode_table[op.encoding](opcode, emit_error);
+#else
+  switch (static_cast<unsigned>(op.encoding)) {
+  case 4:
+  case 5:
+  case 6:
+  case 7:
+    return detail::decodeVCndmaskB32Vop2(opcode, emit_error);
+  case 8:
+  case 9:
+  case 10:
+  case 11:
+    return detail::decodeVDot2cF32F16Vop2(opcode, emit_error);
+  case 12:
+  case 13:
+  case 14:
+  case 15:
+    return detail::decodeVAddF32Vop2(opcode, emit_error);
+  case 16:
+  case 17:
+  case 18:
+  case 19:
+    return detail::decodeVSubF32Vop2(opcode, emit_error);
+  case 20:
+  case 21:
+  case 22:
+  case 23:
+    return detail::decodeVSubrevF32Vop2(opcode, emit_error);
+  case 24:
+  case 25:
+  case 26:
+  case 27:
+    return detail::decodeVFmacLegacyF32Vop2(opcode, emit_error);
+  case 28:
+  case 29:
+  case 30:
+  case 31:
+    return detail::decodeVMulLegacyF32Vop2(opcode, emit_error);
+  case 32:
+  case 33:
+  case 34:
+  case 35:
+    return detail::decodeVMulF32Vop2(opcode, emit_error);
+  case 36:
+  case 37:
+  case 38:
+  case 39:
+    return detail::decodeVMulI32I24Vop2(opcode, emit_error);
+  case 40:
+  case 41:
+  case 42:
+  case 43:
+    return detail::decodeVMulHiI32I24Vop2(opcode, emit_error);
+  case 44:
+  case 45:
+  case 46:
+  case 47:
+    return detail::decodeVMulU32U24Vop2(opcode, emit_error);
+  case 48:
+  case 49:
+  case 50:
+  case 51:
+    return detail::decodeVMulHiU32U24Vop2(opcode, emit_error);
+  case 52:
+  case 53:
+  case 54:
+  case 55:
+    return detail::decodeVDot4cI32I8Vop2(opcode, emit_error);
+  case 60:
+  case 61:
+  case 62:
+  case 63:
+    return detail::decodeVMinF32Vop2(opcode, emit_error);
+  case 64:
+  case 65:
+  case 66:
+  case 67:
+    return detail::decodeVMaxF32Vop2(opcode, emit_error);
+  case 68:
+  case 69:
+  case 70:
+  case 71:
+    return detail::decodeVMinI32Vop2(opcode, emit_error);
+  case 72:
+  case 73:
+  case 74:
+  case 75:
+    return detail::decodeVMaxI32Vop2(opcode, emit_error);
+  case 76:
+  case 77:
+  case 78:
+  case 79:
+    return detail::decodeVMinU32Vop2(opcode, emit_error);
+  case 80:
+  case 81:
+  case 82:
+  case 83:
+    return detail::decodeVMaxU32Vop2(opcode, emit_error);
+  case 88:
+  case 89:
+  case 90:
+  case 91:
+    return detail::decodeVLshrrevB32Vop2(opcode, emit_error);
+  case 96:
+  case 97:
+  case 98:
+  case 99:
+    return detail::decodeVAshrrevI32Vop2(opcode, emit_error);
+  case 104:
+  case 105:
+  case 106:
+  case 107:
+    return detail::decodeVLshlrevB32Vop2(opcode, emit_error);
+  case 108:
+  case 109:
+  case 110:
+  case 111:
+    return detail::decodeVAndB32Vop2(opcode, emit_error);
+  case 112:
+  case 113:
+  case 114:
+  case 115:
+    return detail::decodeVOrB32Vop2(opcode, emit_error);
+  case 116:
+  case 117:
+  case 118:
+  case 119:
+    return detail::decodeVXorB32Vop2(opcode, emit_error);
+  case 120:
+  case 121:
+  case 122:
+  case 123:
+    return detail::decodeVXnorB32Vop2(opcode, emit_error);
+  case 148:
+  case 149:
+  case 150:
+  case 151:
+    return detail::decodeVAddNcU32Vop2(opcode, emit_error);
+  case 152:
+  case 153:
+  case 154:
+  case 155:
+    return detail::decodeVSubNcU32Vop2(opcode, emit_error);
+  case 156:
+  case 157:
+  case 158:
+  case 159:
+    return detail::decodeVSubrevNcU32Vop2(opcode, emit_error);
+  case 160:
+  case 161:
+  case 162:
+  case 163:
+    return detail::decodeVAddCoCiU32Vop2(opcode, emit_error);
+  case 164:
+  case 165:
+  case 166:
+  case 167:
+    return detail::decodeVSubCoCiU32Vop2(opcode, emit_error);
+  case 168:
+  case 169:
+  case 170:
+  case 171:
+    return detail::decodeVSubrevCoCiU32Vop2(opcode, emit_error);
+  case 172:
+  case 173:
+  case 174:
+  case 175:
+    return detail::decodeVFmacF32Vop2(opcode, emit_error);
+  case 176:
+  case 177:
+  case 178:
+  case 179:
+    return detail::decodeVFmamkF32Vop2(opcode, emit_error);
+  case 180:
+  case 181:
+  case 182:
+  case 183:
+    return detail::decodeVFmaakF32Vop2(opcode, emit_error);
+  case 188:
+  case 189:
+  case 190:
+  case 191:
+    return detail::decodeVCvtPkrtzF16F32Vop2(opcode, emit_error);
+  case 200:
+  case 201:
+  case 202:
+  case 203:
+    return detail::decodeVAddF16Vop2(opcode, emit_error);
+  case 204:
+  case 205:
+  case 206:
+  case 207:
+    return detail::decodeVSubF16Vop2(opcode, emit_error);
+  case 208:
+  case 209:
+  case 210:
+  case 211:
+    return detail::decodeVSubrevF16Vop2(opcode, emit_error);
+  case 212:
+  case 213:
+  case 214:
+  case 215:
+    return detail::decodeVMulF16Vop2(opcode, emit_error);
+  case 216:
+  case 217:
+  case 218:
+  case 219:
+    return detail::decodeVFmacF16Vop2(opcode, emit_error);
+  case 220:
+  case 221:
+  case 222:
+  case 223:
+    return detail::decodeVFmamkF16Vop2(opcode, emit_error);
+  case 224:
+  case 225:
+  case 226:
+  case 227:
+    return detail::decodeVFmaakF16Vop2(opcode, emit_error);
+  case 228:
+  case 229:
+  case 230:
+  case 231:
+    return detail::decodeVMaxF16Vop2(opcode, emit_error);
+  case 232:
+  case 233:
+  case 234:
+  case 235:
+    return detail::decodeVMinF16Vop2(opcode, emit_error);
+  case 236:
+  case 237:
+  case 238:
+  case 239:
+    return detail::decodeVLdexpF16Vop2(opcode, emit_error);
+  case 240:
+  case 241:
+  case 242:
+  case 243:
+    return detail::decodeVPkFmacF16Vop2(opcode, emit_error);
+  case 248:
+  case 250:
+  case 251:
+    return DecoderImpl::subDecodeVopc(opcode, emit_error);
+  case 252:
+  case 253:
+  case 254:
+  case 255:
+    return DecoderImpl::subDecodeVop1(opcode, emit_error);
+  case 256:
+    return detail::decodeSAddU32Sop2(opcode, emit_error);
+  case 257:
+    return detail::decodeSSubU32Sop2(opcode, emit_error);
+  case 258:
+    return detail::decodeSAddI32Sop2(opcode, emit_error);
+  case 259:
+    return detail::decodeSSubI32Sop2(opcode, emit_error);
+  case 260:
+    return detail::decodeSAddcU32Sop2(opcode, emit_error);
+  case 261:
+    return detail::decodeSSubbU32Sop2(opcode, emit_error);
+  case 262:
+    return detail::decodeSMinI32Sop2(opcode, emit_error);
+  case 263:
+    return detail::decodeSMinU32Sop2(opcode, emit_error);
+  case 264:
+    return detail::decodeSMaxI32Sop2(opcode, emit_error);
+  case 265:
+    return detail::decodeSMaxU32Sop2(opcode, emit_error);
+  case 266:
+    return detail::decodeSCselectB32Sop2(opcode, emit_error);
+  case 267:
+    return detail::decodeSCselectB64Sop2(opcode, emit_error);
+  case 270:
+    return detail::decodeSAndB32Sop2(opcode, emit_error);
+  case 271:
+    return detail::decodeSAndB64Sop2(opcode, emit_error);
+  case 272:
+    return detail::decodeSOrB32Sop2(opcode, emit_error);
+  case 273:
+    return detail::decodeSOrB64Sop2(opcode, emit_error);
+  case 274:
+    return detail::decodeSXorB32Sop2(opcode, emit_error);
+  case 275:
+    return detail::decodeSXorB64Sop2(opcode, emit_error);
+  case 276:
+    return detail::decodeSAndn2B32Sop2(opcode, emit_error);
+  case 277:
+    return detail::decodeSAndn2B64Sop2(opcode, emit_error);
+  case 278:
+    return detail::decodeSOrn2B32Sop2(opcode, emit_error);
+  case 279:
+    return detail::decodeSOrn2B64Sop2(opcode, emit_error);
+  case 280:
+    return detail::decodeSNandB32Sop2(opcode, emit_error);
+  case 281:
+    return detail::decodeSNandB64Sop2(opcode, emit_error);
+  case 282:
+    return detail::decodeSNorB32Sop2(opcode, emit_error);
+  case 283:
+    return detail::decodeSNorB64Sop2(opcode, emit_error);
+  case 284:
+    return detail::decodeSXnorB32Sop2(opcode, emit_error);
+  case 285:
+    return detail::decodeSXnorB64Sop2(opcode, emit_error);
+  case 286:
+    return detail::decodeSLshlB32Sop2(opcode, emit_error);
+  case 287:
+    return detail::decodeSLshlB64Sop2(opcode, emit_error);
+  case 288:
+    return detail::decodeSLshrB32Sop2(opcode, emit_error);
+  case 289:
+    return detail::decodeSLshrB64Sop2(opcode, emit_error);
+  case 290:
+    return detail::decodeSAshrI32Sop2(opcode, emit_error);
+  case 291:
+    return detail::decodeSAshrI64Sop2(opcode, emit_error);
+  case 292:
+    return detail::decodeSBfmB32Sop2(opcode, emit_error);
+  case 293:
+    return detail::decodeSBfmB64Sop2(opcode, emit_error);
+  case 294:
+    return detail::decodeSMulI32Sop2(opcode, emit_error);
+  case 295:
+    return detail::decodeSBfeU32Sop2(opcode, emit_error);
+  case 296:
+    return detail::decodeSBfeI32Sop2(opcode, emit_error);
+  case 297:
+    return detail::decodeSBfeU64Sop2(opcode, emit_error);
+  case 298:
+    return detail::decodeSBfeI64Sop2(opcode, emit_error);
+  case 300:
+    return detail::decodeSAbsdiffI32Sop2(opcode, emit_error);
+  case 302:
+    return detail::decodeSLshl1AddU32Sop2(opcode, emit_error);
+  case 303:
+    return detail::decodeSLshl2AddU32Sop2(opcode, emit_error);
+  case 304:
+    return detail::decodeSLshl3AddU32Sop2(opcode, emit_error);
+  case 305:
+    return detail::decodeSLshl4AddU32Sop2(opcode, emit_error);
+  case 306:
+    return detail::decodeSPackLlB32B16Sop2(opcode, emit_error);
+  case 307:
+    return detail::decodeSPackLhB32B16Sop2(opcode, emit_error);
+  case 308:
+    return detail::decodeSPackHhB32B16Sop2(opcode, emit_error);
+  case 309:
+    return detail::decodeSMulHiU32Sop2(opcode, emit_error);
+  case 310:
+    return detail::decodeSMulHiI32Sop2(opcode, emit_error);
+  case 352:
+    return detail::decodeSMovkI32Sopk(opcode, emit_error);
+  case 353:
+    return detail::decodeSVersionSopk(opcode, emit_error);
+  case 354:
+    return detail::decodeSCmovkI32Sopk(opcode, emit_error);
+  case 355:
+    return detail::decodeSCmpkEqI32Sopk(opcode, emit_error);
+  case 356:
+    return detail::decodeSCmpkLgI32Sopk(opcode, emit_error);
+  case 357:
+    return detail::decodeSCmpkGtI32Sopk(opcode, emit_error);
+  case 358:
+    return detail::decodeSCmpkGeI32Sopk(opcode, emit_error);
+  case 359:
+    return detail::decodeSCmpkLtI32Sopk(opcode, emit_error);
+  case 360:
+    return detail::decodeSCmpkLeI32Sopk(opcode, emit_error);
+  case 361:
+    return detail::decodeSCmpkEqU32Sopk(opcode, emit_error);
+  case 362:
+    return detail::decodeSCmpkLgU32Sopk(opcode, emit_error);
+  case 363:
+    return detail::decodeSCmpkGtU32Sopk(opcode, emit_error);
+  case 364:
+    return detail::decodeSCmpkGeU32Sopk(opcode, emit_error);
+  case 365:
+    return detail::decodeSCmpkLtU32Sopk(opcode, emit_error);
+  case 366:
+    return detail::decodeSCmpkLeU32Sopk(opcode, emit_error);
+  case 367:
+    return detail::decodeSAddkI32Sopk(opcode, emit_error);
+  case 368:
+    return detail::decodeSMulkI32Sopk(opcode, emit_error);
+  case 370:
+    return detail::decodeSGetregB32Sopk(opcode, emit_error);
+  case 371:
+    return detail::decodeSSetregB32Sopk(opcode, emit_error);
+  case 373:
+    return detail::decodeSSetregImm32B32Sopk(opcode, emit_error);
+  case 374:
+    return detail::decodeSCallB64Sopk(opcode, emit_error);
+  case 375:
+    return detail::decodeSWaitcntVscntSopk(opcode, emit_error);
+  case 376:
+    return detail::decodeSWaitcntVmcntSopk(opcode, emit_error);
+  case 377:
+    return detail::decodeSWaitcntExpcntSopk(opcode, emit_error);
+  case 378:
+    return detail::decodeSWaitcntLgkmcntSopk(opcode, emit_error);
+  case 379:
+    return detail::decodeSSubvectorLoopBeginSopk(opcode, emit_error);
+  case 380:
+    return detail::decodeSSubvectorLoopEndSopk(opcode, emit_error);
+  case 381:
+    return DecoderImpl::subDecodeSop1(opcode, emit_error);
+  case 382:
+    return DecoderImpl::subDecodeSopc(opcode, emit_error);
+  case 383:
+    return DecoderImpl::subDecodeSopp(opcode, emit_error);
+  case 400:
+  case 401:
+  case 402:
+  case 403:
+  case 404:
+  case 405:
+  case 406:
+  case 407:
+    return DecoderImpl::subDecodeVintrp(opcode, emit_error);
+  case 408:
+  case 409:
+  case 410:
+  case 411:
+  case 412:
+  case 413:
+  case 414:
+  case 415:
+    return DecoderImpl::subDecodeVop3p(opcode, emit_error);
+  case 424:
+  case 425:
+  case 426:
+  case 427:
+  case 428:
+  case 429:
+  case 430:
+    return DecoderImpl::subDecodeVop3(opcode, emit_error);
+  case 432:
+  case 433:
+  case 434:
+  case 435:
+  case 437:
+  case 438:
+  case 439:
+    return DecoderImpl::subDecodeDs(opcode, emit_error);
+  case 440:
+  case 441:
+  case 442:
+  case 443:
+  case 444:
+  case 445:
+  case 446:
+  case 447:
+    return DecoderImpl::subDecodeFlat(opcode, emit_error);
+  case 448:
+  case 449:
+  case 450:
+  case 451:
+  case 452:
+  case 453:
+  case 454:
+  case 455:
+    return DecoderImpl::subDecodeMubuf(opcode, emit_error);
+  case 464:
+  case 465:
+  case 466:
+  case 467:
+  case 468:
+  case 469:
+  case 470:
+  case 471:
+    return DecoderImpl::subDecodeMtbuf(opcode, emit_error);
+  case 480:
+  case 481:
+  case 482:
+  case 483:
+  case 484:
+  case 485:
+  case 486:
+  case 487:
+    return DecoderImpl::subDecodeMimg(opcode, emit_error);
+  case 488:
+  case 489:
+    return DecoderImpl::subDecodeSmem(opcode, emit_error);
+  case 496:
+  case 497:
+  case 498:
+  case 499:
+  case 500:
+  case 501:
+  case 502:
+  case 503:
+    return detail::decodeExpExp(opcode, emit_error);
+  default:
+    return DecoderImpl::decodeInvalid(opcode, emit_error);
+  }
+#endif
 }
 
 DecodeResult DecoderImpl::decodeInvalid(const MachineInst *opcode,
@@ -1951,3608 +2458,4290 @@ DecodeResult DecoderImpl::decodeInvalid(const MachineInst *opcode,
 DecodeResult DecoderImpl::subDecodeVopc(const MachineInst *opcode,
                                         const DecodeErrorEmitter &emit_error) {
   Vopc::OpEncoding op = *reinterpret_cast<const decltype(op) *>(opcode);
+#if RJ_HOST_HAS_X86_64_ELF_REL32
   return sub_decode_vopc[op.op](opcode, emit_error);
+#else
+  switch (static_cast<unsigned>(op.op)) {
+  case 0:
+    return detail::decodeVCmpFF32Vopc(opcode, emit_error);
+  case 1:
+    return detail::decodeVCmpLtF32Vopc(opcode, emit_error);
+  case 2:
+    return detail::decodeVCmpEqF32Vopc(opcode, emit_error);
+  case 3:
+    return detail::decodeVCmpLeF32Vopc(opcode, emit_error);
+  case 4:
+    return detail::decodeVCmpGtF32Vopc(opcode, emit_error);
+  case 5:
+    return detail::decodeVCmpLgF32Vopc(opcode, emit_error);
+  case 6:
+    return detail::decodeVCmpGeF32Vopc(opcode, emit_error);
+  case 7:
+    return detail::decodeVCmpOF32Vopc(opcode, emit_error);
+  case 8:
+    return detail::decodeVCmpUF32Vopc(opcode, emit_error);
+  case 9:
+    return detail::decodeVCmpNgeF32Vopc(opcode, emit_error);
+  case 10:
+    return detail::decodeVCmpNlgF32Vopc(opcode, emit_error);
+  case 11:
+    return detail::decodeVCmpNgtF32Vopc(opcode, emit_error);
+  case 12:
+    return detail::decodeVCmpNleF32Vopc(opcode, emit_error);
+  case 13:
+    return detail::decodeVCmpNeqF32Vopc(opcode, emit_error);
+  case 14:
+    return detail::decodeVCmpNltF32Vopc(opcode, emit_error);
+  case 15:
+    return detail::decodeVCmpTruF32Vopc(opcode, emit_error);
+  case 16:
+    return detail::decodeVCmpxFF32Vopc(opcode, emit_error);
+  case 17:
+    return detail::decodeVCmpxLtF32Vopc(opcode, emit_error);
+  case 18:
+    return detail::decodeVCmpxEqF32Vopc(opcode, emit_error);
+  case 19:
+    return detail::decodeVCmpxLeF32Vopc(opcode, emit_error);
+  case 20:
+    return detail::decodeVCmpxGtF32Vopc(opcode, emit_error);
+  case 21:
+    return detail::decodeVCmpxLgF32Vopc(opcode, emit_error);
+  case 22:
+    return detail::decodeVCmpxGeF32Vopc(opcode, emit_error);
+  case 23:
+    return detail::decodeVCmpxOF32Vopc(opcode, emit_error);
+  case 24:
+    return detail::decodeVCmpxUF32Vopc(opcode, emit_error);
+  case 25:
+    return detail::decodeVCmpxNgeF32Vopc(opcode, emit_error);
+  case 26:
+    return detail::decodeVCmpxNlgF32Vopc(opcode, emit_error);
+  case 27:
+    return detail::decodeVCmpxNgtF32Vopc(opcode, emit_error);
+  case 28:
+    return detail::decodeVCmpxNleF32Vopc(opcode, emit_error);
+  case 29:
+    return detail::decodeVCmpxNeqF32Vopc(opcode, emit_error);
+  case 30:
+    return detail::decodeVCmpxNltF32Vopc(opcode, emit_error);
+  case 31:
+    return detail::decodeVCmpxTruF32Vopc(opcode, emit_error);
+  case 32:
+    return detail::decodeVCmpFF64Vopc(opcode, emit_error);
+  case 33:
+    return detail::decodeVCmpLtF64Vopc(opcode, emit_error);
+  case 34:
+    return detail::decodeVCmpEqF64Vopc(opcode, emit_error);
+  case 35:
+    return detail::decodeVCmpLeF64Vopc(opcode, emit_error);
+  case 36:
+    return detail::decodeVCmpGtF64Vopc(opcode, emit_error);
+  case 37:
+    return detail::decodeVCmpLgF64Vopc(opcode, emit_error);
+  case 38:
+    return detail::decodeVCmpGeF64Vopc(opcode, emit_error);
+  case 39:
+    return detail::decodeVCmpOF64Vopc(opcode, emit_error);
+  case 40:
+    return detail::decodeVCmpUF64Vopc(opcode, emit_error);
+  case 41:
+    return detail::decodeVCmpNgeF64Vopc(opcode, emit_error);
+  case 42:
+    return detail::decodeVCmpNlgF64Vopc(opcode, emit_error);
+  case 43:
+    return detail::decodeVCmpNgtF64Vopc(opcode, emit_error);
+  case 44:
+    return detail::decodeVCmpNleF64Vopc(opcode, emit_error);
+  case 45:
+    return detail::decodeVCmpNeqF64Vopc(opcode, emit_error);
+  case 46:
+    return detail::decodeVCmpNltF64Vopc(opcode, emit_error);
+  case 47:
+    return detail::decodeVCmpTruF64Vopc(opcode, emit_error);
+  case 48:
+    return detail::decodeVCmpxFF64Vopc(opcode, emit_error);
+  case 49:
+    return detail::decodeVCmpxLtF64Vopc(opcode, emit_error);
+  case 50:
+    return detail::decodeVCmpxEqF64Vopc(opcode, emit_error);
+  case 51:
+    return detail::decodeVCmpxLeF64Vopc(opcode, emit_error);
+  case 52:
+    return detail::decodeVCmpxGtF64Vopc(opcode, emit_error);
+  case 53:
+    return detail::decodeVCmpxLgF64Vopc(opcode, emit_error);
+  case 54:
+    return detail::decodeVCmpxGeF64Vopc(opcode, emit_error);
+  case 55:
+    return detail::decodeVCmpxOF64Vopc(opcode, emit_error);
+  case 56:
+    return detail::decodeVCmpxUF64Vopc(opcode, emit_error);
+  case 57:
+    return detail::decodeVCmpxNgeF64Vopc(opcode, emit_error);
+  case 58:
+    return detail::decodeVCmpxNlgF64Vopc(opcode, emit_error);
+  case 59:
+    return detail::decodeVCmpxNgtF64Vopc(opcode, emit_error);
+  case 60:
+    return detail::decodeVCmpxNleF64Vopc(opcode, emit_error);
+  case 61:
+    return detail::decodeVCmpxNeqF64Vopc(opcode, emit_error);
+  case 62:
+    return detail::decodeVCmpxNltF64Vopc(opcode, emit_error);
+  case 63:
+    return detail::decodeVCmpxTruF64Vopc(opcode, emit_error);
+  case 128:
+    return detail::decodeVCmpFI32Vopc(opcode, emit_error);
+  case 129:
+    return detail::decodeVCmpLtI32Vopc(opcode, emit_error);
+  case 130:
+    return detail::decodeVCmpEqI32Vopc(opcode, emit_error);
+  case 131:
+    return detail::decodeVCmpLeI32Vopc(opcode, emit_error);
+  case 132:
+    return detail::decodeVCmpGtI32Vopc(opcode, emit_error);
+  case 133:
+    return detail::decodeVCmpNeI32Vopc(opcode, emit_error);
+  case 134:
+    return detail::decodeVCmpGeI32Vopc(opcode, emit_error);
+  case 135:
+    return detail::decodeVCmpTI32Vopc(opcode, emit_error);
+  case 136:
+    return detail::decodeVCmpClassF32Vopc(opcode, emit_error);
+  case 137:
+    return detail::decodeVCmpLtI16Vopc(opcode, emit_error);
+  case 138:
+    return detail::decodeVCmpEqI16Vopc(opcode, emit_error);
+  case 139:
+    return detail::decodeVCmpLeI16Vopc(opcode, emit_error);
+  case 140:
+    return detail::decodeVCmpGtI16Vopc(opcode, emit_error);
+  case 141:
+    return detail::decodeVCmpNeI16Vopc(opcode, emit_error);
+  case 142:
+    return detail::decodeVCmpGeI16Vopc(opcode, emit_error);
+  case 143:
+    return detail::decodeVCmpClassF16Vopc(opcode, emit_error);
+  case 144:
+    return detail::decodeVCmpxFI32Vopc(opcode, emit_error);
+  case 145:
+    return detail::decodeVCmpxLtI32Vopc(opcode, emit_error);
+  case 146:
+    return detail::decodeVCmpxEqI32Vopc(opcode, emit_error);
+  case 147:
+    return detail::decodeVCmpxLeI32Vopc(opcode, emit_error);
+  case 148:
+    return detail::decodeVCmpxGtI32Vopc(opcode, emit_error);
+  case 149:
+    return detail::decodeVCmpxNeI32Vopc(opcode, emit_error);
+  case 150:
+    return detail::decodeVCmpxGeI32Vopc(opcode, emit_error);
+  case 151:
+    return detail::decodeVCmpxTI32Vopc(opcode, emit_error);
+  case 152:
+    return detail::decodeVCmpxClassF32Vopc(opcode, emit_error);
+  case 153:
+    return detail::decodeVCmpxLtI16Vopc(opcode, emit_error);
+  case 154:
+    return detail::decodeVCmpxEqI16Vopc(opcode, emit_error);
+  case 155:
+    return detail::decodeVCmpxLeI16Vopc(opcode, emit_error);
+  case 156:
+    return detail::decodeVCmpxGtI16Vopc(opcode, emit_error);
+  case 157:
+    return detail::decodeVCmpxNeI16Vopc(opcode, emit_error);
+  case 158:
+    return detail::decodeVCmpxGeI16Vopc(opcode, emit_error);
+  case 159:
+    return detail::decodeVCmpxClassF16Vopc(opcode, emit_error);
+  case 160:
+    return detail::decodeVCmpFI64Vopc(opcode, emit_error);
+  case 161:
+    return detail::decodeVCmpLtI64Vopc(opcode, emit_error);
+  case 162:
+    return detail::decodeVCmpEqI64Vopc(opcode, emit_error);
+  case 163:
+    return detail::decodeVCmpLeI64Vopc(opcode, emit_error);
+  case 164:
+    return detail::decodeVCmpGtI64Vopc(opcode, emit_error);
+  case 165:
+    return detail::decodeVCmpNeI64Vopc(opcode, emit_error);
+  case 166:
+    return detail::decodeVCmpGeI64Vopc(opcode, emit_error);
+  case 167:
+    return detail::decodeVCmpTI64Vopc(opcode, emit_error);
+  case 168:
+    return detail::decodeVCmpClassF64Vopc(opcode, emit_error);
+  case 169:
+    return detail::decodeVCmpLtU16Vopc(opcode, emit_error);
+  case 170:
+    return detail::decodeVCmpEqU16Vopc(opcode, emit_error);
+  case 171:
+    return detail::decodeVCmpLeU16Vopc(opcode, emit_error);
+  case 172:
+    return detail::decodeVCmpGtU16Vopc(opcode, emit_error);
+  case 173:
+    return detail::decodeVCmpNeU16Vopc(opcode, emit_error);
+  case 174:
+    return detail::decodeVCmpGeU16Vopc(opcode, emit_error);
+  case 176:
+    return detail::decodeVCmpxFI64Vopc(opcode, emit_error);
+  case 177:
+    return detail::decodeVCmpxLtI64Vopc(opcode, emit_error);
+  case 178:
+    return detail::decodeVCmpxEqI64Vopc(opcode, emit_error);
+  case 179:
+    return detail::decodeVCmpxLeI64Vopc(opcode, emit_error);
+  case 180:
+    return detail::decodeVCmpxGtI64Vopc(opcode, emit_error);
+  case 181:
+    return detail::decodeVCmpxNeI64Vopc(opcode, emit_error);
+  case 182:
+    return detail::decodeVCmpxGeI64Vopc(opcode, emit_error);
+  case 183:
+    return detail::decodeVCmpxTI64Vopc(opcode, emit_error);
+  case 184:
+    return detail::decodeVCmpxClassF64Vopc(opcode, emit_error);
+  case 185:
+    return detail::decodeVCmpxLtU16Vopc(opcode, emit_error);
+  case 186:
+    return detail::decodeVCmpxEqU16Vopc(opcode, emit_error);
+  case 187:
+    return detail::decodeVCmpxLeU16Vopc(opcode, emit_error);
+  case 188:
+    return detail::decodeVCmpxGtU16Vopc(opcode, emit_error);
+  case 189:
+    return detail::decodeVCmpxNeU16Vopc(opcode, emit_error);
+  case 190:
+    return detail::decodeVCmpxGeU16Vopc(opcode, emit_error);
+  case 192:
+    return detail::decodeVCmpFU32Vopc(opcode, emit_error);
+  case 193:
+    return detail::decodeVCmpLtU32Vopc(opcode, emit_error);
+  case 194:
+    return detail::decodeVCmpEqU32Vopc(opcode, emit_error);
+  case 195:
+    return detail::decodeVCmpLeU32Vopc(opcode, emit_error);
+  case 196:
+    return detail::decodeVCmpGtU32Vopc(opcode, emit_error);
+  case 197:
+    return detail::decodeVCmpNeU32Vopc(opcode, emit_error);
+  case 198:
+    return detail::decodeVCmpGeU32Vopc(opcode, emit_error);
+  case 199:
+    return detail::decodeVCmpTU32Vopc(opcode, emit_error);
+  case 200:
+    return detail::decodeVCmpFF16Vopc(opcode, emit_error);
+  case 201:
+    return detail::decodeVCmpLtF16Vopc(opcode, emit_error);
+  case 202:
+    return detail::decodeVCmpEqF16Vopc(opcode, emit_error);
+  case 203:
+    return detail::decodeVCmpLeF16Vopc(opcode, emit_error);
+  case 204:
+    return detail::decodeVCmpGtF16Vopc(opcode, emit_error);
+  case 205:
+    return detail::decodeVCmpLgF16Vopc(opcode, emit_error);
+  case 206:
+    return detail::decodeVCmpGeF16Vopc(opcode, emit_error);
+  case 207:
+    return detail::decodeVCmpOF16Vopc(opcode, emit_error);
+  case 208:
+    return detail::decodeVCmpxFU32Vopc(opcode, emit_error);
+  case 209:
+    return detail::decodeVCmpxLtU32Vopc(opcode, emit_error);
+  case 210:
+    return detail::decodeVCmpxEqU32Vopc(opcode, emit_error);
+  case 211:
+    return detail::decodeVCmpxLeU32Vopc(opcode, emit_error);
+  case 212:
+    return detail::decodeVCmpxGtU32Vopc(opcode, emit_error);
+  case 213:
+    return detail::decodeVCmpxNeU32Vopc(opcode, emit_error);
+  case 214:
+    return detail::decodeVCmpxGeU32Vopc(opcode, emit_error);
+  case 215:
+    return detail::decodeVCmpxTU32Vopc(opcode, emit_error);
+  case 216:
+    return detail::decodeVCmpxFF16Vopc(opcode, emit_error);
+  case 217:
+    return detail::decodeVCmpxLtF16Vopc(opcode, emit_error);
+  case 218:
+    return detail::decodeVCmpxEqF16Vopc(opcode, emit_error);
+  case 219:
+    return detail::decodeVCmpxLeF16Vopc(opcode, emit_error);
+  case 220:
+    return detail::decodeVCmpxGtF16Vopc(opcode, emit_error);
+  case 221:
+    return detail::decodeVCmpxLgF16Vopc(opcode, emit_error);
+  case 222:
+    return detail::decodeVCmpxGeF16Vopc(opcode, emit_error);
+  case 223:
+    return detail::decodeVCmpxOF16Vopc(opcode, emit_error);
+  case 224:
+    return detail::decodeVCmpFU64Vopc(opcode, emit_error);
+  case 225:
+    return detail::decodeVCmpLtU64Vopc(opcode, emit_error);
+  case 226:
+    return detail::decodeVCmpEqU64Vopc(opcode, emit_error);
+  case 227:
+    return detail::decodeVCmpLeU64Vopc(opcode, emit_error);
+  case 228:
+    return detail::decodeVCmpGtU64Vopc(opcode, emit_error);
+  case 229:
+    return detail::decodeVCmpNeU64Vopc(opcode, emit_error);
+  case 230:
+    return detail::decodeVCmpGeU64Vopc(opcode, emit_error);
+  case 231:
+    return detail::decodeVCmpTU64Vopc(opcode, emit_error);
+  case 232:
+    return detail::decodeVCmpUF16Vopc(opcode, emit_error);
+  case 233:
+    return detail::decodeVCmpNgeF16Vopc(opcode, emit_error);
+  case 234:
+    return detail::decodeVCmpNlgF16Vopc(opcode, emit_error);
+  case 235:
+    return detail::decodeVCmpNgtF16Vopc(opcode, emit_error);
+  case 236:
+    return detail::decodeVCmpNleF16Vopc(opcode, emit_error);
+  case 237:
+    return detail::decodeVCmpNeqF16Vopc(opcode, emit_error);
+  case 238:
+    return detail::decodeVCmpNltF16Vopc(opcode, emit_error);
+  case 239:
+    return detail::decodeVCmpTruF16Vopc(opcode, emit_error);
+  case 240:
+    return detail::decodeVCmpxFU64Vopc(opcode, emit_error);
+  case 241:
+    return detail::decodeVCmpxLtU64Vopc(opcode, emit_error);
+  case 242:
+    return detail::decodeVCmpxEqU64Vopc(opcode, emit_error);
+  case 243:
+    return detail::decodeVCmpxLeU64Vopc(opcode, emit_error);
+  case 244:
+    return detail::decodeVCmpxGtU64Vopc(opcode, emit_error);
+  case 245:
+    return detail::decodeVCmpxNeU64Vopc(opcode, emit_error);
+  case 246:
+    return detail::decodeVCmpxGeU64Vopc(opcode, emit_error);
+  case 247:
+    return detail::decodeVCmpxTU64Vopc(opcode, emit_error);
+  case 248:
+    return detail::decodeVCmpxUF16Vopc(opcode, emit_error);
+  case 249:
+    return detail::decodeVCmpxNgeF16Vopc(opcode, emit_error);
+  case 250:
+    return detail::decodeVCmpxNlgF16Vopc(opcode, emit_error);
+  case 251:
+    return detail::decodeVCmpxNgtF16Vopc(opcode, emit_error);
+  case 252:
+    return detail::decodeVCmpxNleF16Vopc(opcode, emit_error);
+  case 253:
+    return detail::decodeVCmpxNeqF16Vopc(opcode, emit_error);
+  case 254:
+    return detail::decodeVCmpxNltF16Vopc(opcode, emit_error);
+  case 255:
+    return detail::decodeVCmpxTruF16Vopc(opcode, emit_error);
+  default:
+    return DecoderImpl::decodeInvalid(opcode, emit_error);
+  }
+#endif
 }
 
 DecodeResult DecoderImpl::subDecodeVop1(const MachineInst *opcode,
                                         const DecodeErrorEmitter &emit_error) {
   Vop1::OpEncoding op = *reinterpret_cast<const decltype(op) *>(opcode);
+#if RJ_HOST_HAS_X86_64_ELF_REL32
   return sub_decode_vop1[op.op](opcode, emit_error);
+#else
+  switch (static_cast<unsigned>(op.op)) {
+  case 0:
+    return detail::decodeVNopVop1(opcode, emit_error);
+  case 1:
+    return detail::decodeVMovB32Vop1(opcode, emit_error);
+  case 2:
+    return detail::decodeVReadfirstlaneB32Vop1(opcode, emit_error);
+  case 3:
+    return detail::decodeVCvtI32F64Vop1(opcode, emit_error);
+  case 4:
+    return detail::decodeVCvtF64I32Vop1(opcode, emit_error);
+  case 5:
+    return detail::decodeVCvtF32I32Vop1(opcode, emit_error);
+  case 6:
+    return detail::decodeVCvtF32U32Vop1(opcode, emit_error);
+  case 7:
+    return detail::decodeVCvtU32F32Vop1(opcode, emit_error);
+  case 8:
+    return detail::decodeVCvtI32F32Vop1(opcode, emit_error);
+  case 10:
+    return detail::decodeVCvtF16F32Vop1(opcode, emit_error);
+  case 11:
+    return detail::decodeVCvtF32F16Vop1(opcode, emit_error);
+  case 12:
+    return detail::decodeVCvtRpiI32F32Vop1(opcode, emit_error);
+  case 13:
+    return detail::decodeVCvtFlrI32F32Vop1(opcode, emit_error);
+  case 14:
+    return detail::decodeVCvtOffF32I4Vop1(opcode, emit_error);
+  case 15:
+    return detail::decodeVCvtF32F64Vop1(opcode, emit_error);
+  case 16:
+    return detail::decodeVCvtF64F32Vop1(opcode, emit_error);
+  case 17:
+    return detail::decodeVCvtF32Ubyte0Vop1(opcode, emit_error);
+  case 18:
+    return detail::decodeVCvtF32Ubyte1Vop1(opcode, emit_error);
+  case 19:
+    return detail::decodeVCvtF32Ubyte2Vop1(opcode, emit_error);
+  case 20:
+    return detail::decodeVCvtF32Ubyte3Vop1(opcode, emit_error);
+  case 21:
+    return detail::decodeVCvtU32F64Vop1(opcode, emit_error);
+  case 22:
+    return detail::decodeVCvtF64U32Vop1(opcode, emit_error);
+  case 23:
+    return detail::decodeVTruncF64Vop1(opcode, emit_error);
+  case 24:
+    return detail::decodeVCeilF64Vop1(opcode, emit_error);
+  case 25:
+    return detail::decodeVRndneF64Vop1(opcode, emit_error);
+  case 26:
+    return detail::decodeVFloorF64Vop1(opcode, emit_error);
+  case 27:
+    return detail::decodeVPipeflushVop1(opcode, emit_error);
+  case 32:
+    return detail::decodeVFractF32Vop1(opcode, emit_error);
+  case 33:
+    return detail::decodeVTruncF32Vop1(opcode, emit_error);
+  case 34:
+    return detail::decodeVCeilF32Vop1(opcode, emit_error);
+  case 35:
+    return detail::decodeVRndneF32Vop1(opcode, emit_error);
+  case 36:
+    return detail::decodeVFloorF32Vop1(opcode, emit_error);
+  case 37:
+    return detail::decodeVExpF32Vop1(opcode, emit_error);
+  case 39:
+    return detail::decodeVLogF32Vop1(opcode, emit_error);
+  case 42:
+    return detail::decodeVRcpF32Vop1(opcode, emit_error);
+  case 43:
+    return detail::decodeVRcpIflagF32Vop1(opcode, emit_error);
+  case 46:
+    return detail::decodeVRsqF32Vop1(opcode, emit_error);
+  case 47:
+    return detail::decodeVRcpF64Vop1(opcode, emit_error);
+  case 49:
+    return detail::decodeVRsqF64Vop1(opcode, emit_error);
+  case 51:
+    return detail::decodeVSqrtF32Vop1(opcode, emit_error);
+  case 52:
+    return detail::decodeVSqrtF64Vop1(opcode, emit_error);
+  case 53:
+    return detail::decodeVSinF32Vop1(opcode, emit_error);
+  case 54:
+    return detail::decodeVCosF32Vop1(opcode, emit_error);
+  case 55:
+    return detail::decodeVNotB32Vop1(opcode, emit_error);
+  case 56:
+    return detail::decodeVBfrevB32Vop1(opcode, emit_error);
+  case 57:
+    return detail::decodeVFfbhU32Vop1(opcode, emit_error);
+  case 58:
+    return detail::decodeVFfblB32Vop1(opcode, emit_error);
+  case 59:
+    return detail::decodeVFfbhI32Vop1(opcode, emit_error);
+  case 60:
+    return detail::decodeVFrexpExpI32F64Vop1(opcode, emit_error);
+  case 61:
+    return detail::decodeVFrexpMantF64Vop1(opcode, emit_error);
+  case 62:
+    return detail::decodeVFractF64Vop1(opcode, emit_error);
+  case 63:
+    return detail::decodeVFrexpExpI32F32Vop1(opcode, emit_error);
+  case 64:
+    return detail::decodeVFrexpMantF32Vop1(opcode, emit_error);
+  case 65:
+    return detail::decodeVClrexcpVop1(opcode, emit_error);
+  case 66:
+    return detail::decodeVMovreldB32Vop1(opcode, emit_error);
+  case 67:
+    return detail::decodeVMovrelsB32Vop1(opcode, emit_error);
+  case 68:
+    return detail::decodeVMovrelsdB32Vop1(opcode, emit_error);
+  case 72:
+    return detail::decodeVMovrelsd2B32Vop1(opcode, emit_error);
+  case 80:
+    return detail::decodeVCvtF16U16Vop1(opcode, emit_error);
+  case 81:
+    return detail::decodeVCvtF16I16Vop1(opcode, emit_error);
+  case 82:
+    return detail::decodeVCvtU16F16Vop1(opcode, emit_error);
+  case 83:
+    return detail::decodeVCvtI16F16Vop1(opcode, emit_error);
+  case 84:
+    return detail::decodeVRcpF16Vop1(opcode, emit_error);
+  case 85:
+    return detail::decodeVSqrtF16Vop1(opcode, emit_error);
+  case 86:
+    return detail::decodeVRsqF16Vop1(opcode, emit_error);
+  case 87:
+    return detail::decodeVLogF16Vop1(opcode, emit_error);
+  case 88:
+    return detail::decodeVExpF16Vop1(opcode, emit_error);
+  case 89:
+    return detail::decodeVFrexpMantF16Vop1(opcode, emit_error);
+  case 90:
+    return detail::decodeVFrexpExpI16F16Vop1(opcode, emit_error);
+  case 91:
+    return detail::decodeVFloorF16Vop1(opcode, emit_error);
+  case 92:
+    return detail::decodeVCeilF16Vop1(opcode, emit_error);
+  case 93:
+    return detail::decodeVTruncF16Vop1(opcode, emit_error);
+  case 94:
+    return detail::decodeVRndneF16Vop1(opcode, emit_error);
+  case 95:
+    return detail::decodeVFractF16Vop1(opcode, emit_error);
+  case 96:
+    return detail::decodeVSinF16Vop1(opcode, emit_error);
+  case 97:
+    return detail::decodeVCosF16Vop1(opcode, emit_error);
+  case 98:
+    return detail::decodeVSatPkU8I16Vop1(opcode, emit_error);
+  case 99:
+    return detail::decodeVCvtNormI16F16Vop1(opcode, emit_error);
+  case 100:
+    return detail::decodeVCvtNormU16F16Vop1(opcode, emit_error);
+  case 101:
+    return detail::decodeVSwapB32Vop1(opcode, emit_error);
+  case 104:
+    return detail::decodeVSwaprelB32Vop1(opcode, emit_error);
+  default:
+    return DecoderImpl::decodeInvalid(opcode, emit_error);
+  }
+#endif
 }
 
 DecodeResult DecoderImpl::subDecodeSop1(const MachineInst *opcode,
                                         const DecodeErrorEmitter &emit_error) {
   Sop1::OpEncoding op = *reinterpret_cast<const decltype(op) *>(opcode);
+#if RJ_HOST_HAS_X86_64_ELF_REL32
   return sub_decode_sop1[op.op](opcode, emit_error);
+#else
+  switch (static_cast<unsigned>(op.op)) {
+  case 3:
+    return detail::decodeSMovB32Sop1(opcode, emit_error);
+  case 4:
+    return detail::decodeSMovB64Sop1(opcode, emit_error);
+  case 5:
+    return detail::decodeSCmovB32Sop1(opcode, emit_error);
+  case 6:
+    return detail::decodeSCmovB64Sop1(opcode, emit_error);
+  case 7:
+    return detail::decodeSNotB32Sop1(opcode, emit_error);
+  case 8:
+    return detail::decodeSNotB64Sop1(opcode, emit_error);
+  case 9:
+    return detail::decodeSWqmB32Sop1(opcode, emit_error);
+  case 10:
+    return detail::decodeSWqmB64Sop1(opcode, emit_error);
+  case 11:
+    return detail::decodeSBrevB32Sop1(opcode, emit_error);
+  case 12:
+    return detail::decodeSBrevB64Sop1(opcode, emit_error);
+  case 13:
+    return detail::decodeSBcnt0I32B32Sop1(opcode, emit_error);
+  case 14:
+    return detail::decodeSBcnt0I32B64Sop1(opcode, emit_error);
+  case 15:
+    return detail::decodeSBcnt1I32B32Sop1(opcode, emit_error);
+  case 16:
+    return detail::decodeSBcnt1I32B64Sop1(opcode, emit_error);
+  case 17:
+    return detail::decodeSFf0I32B32Sop1(opcode, emit_error);
+  case 18:
+    return detail::decodeSFf0I32B64Sop1(opcode, emit_error);
+  case 19:
+    return detail::decodeSFf1I32B32Sop1(opcode, emit_error);
+  case 20:
+    return detail::decodeSFf1I32B64Sop1(opcode, emit_error);
+  case 21:
+    return detail::decodeSFlbitI32B32Sop1(opcode, emit_error);
+  case 22:
+    return detail::decodeSFlbitI32B64Sop1(opcode, emit_error);
+  case 23:
+    return detail::decodeSFlbitI32Sop1(opcode, emit_error);
+  case 24:
+    return detail::decodeSFlbitI32I64Sop1(opcode, emit_error);
+  case 25:
+    return detail::decodeSSextI32I8Sop1(opcode, emit_error);
+  case 26:
+    return detail::decodeSSextI32I16Sop1(opcode, emit_error);
+  case 27:
+    return detail::decodeSBitset0B32Sop1(opcode, emit_error);
+  case 28:
+    return detail::decodeSBitset0B64Sop1(opcode, emit_error);
+  case 29:
+    return detail::decodeSBitset1B32Sop1(opcode, emit_error);
+  case 30:
+    return detail::decodeSBitset1B64Sop1(opcode, emit_error);
+  case 31:
+    return detail::decodeSGetpcB64Sop1(opcode, emit_error);
+  case 32:
+    return detail::decodeSSetpcB64Sop1(opcode, emit_error);
+  case 33:
+    return detail::decodeSSwappcB64Sop1(opcode, emit_error);
+  case 34:
+    return detail::decodeSRfeB64Sop1(opcode, emit_error);
+  case 36:
+    return detail::decodeSAndSaveexecB64Sop1(opcode, emit_error);
+  case 37:
+    return detail::decodeSOrSaveexecB64Sop1(opcode, emit_error);
+  case 38:
+    return detail::decodeSXorSaveexecB64Sop1(opcode, emit_error);
+  case 39:
+    return detail::decodeSAndn2SaveexecB64Sop1(opcode, emit_error);
+  case 40:
+    return detail::decodeSOrn2SaveexecB64Sop1(opcode, emit_error);
+  case 41:
+    return detail::decodeSNandSaveexecB64Sop1(opcode, emit_error);
+  case 42:
+    return detail::decodeSNorSaveexecB64Sop1(opcode, emit_error);
+  case 43:
+    return detail::decodeSXnorSaveexecB64Sop1(opcode, emit_error);
+  case 44:
+    return detail::decodeSQuadmaskB32Sop1(opcode, emit_error);
+  case 45:
+    return detail::decodeSQuadmaskB64Sop1(opcode, emit_error);
+  case 46:
+    return detail::decodeSMovrelsB32Sop1(opcode, emit_error);
+  case 47:
+    return detail::decodeSMovrelsB64Sop1(opcode, emit_error);
+  case 48:
+    return detail::decodeSMovreldB32Sop1(opcode, emit_error);
+  case 49:
+    return detail::decodeSMovreldB64Sop1(opcode, emit_error);
+  case 52:
+    return detail::decodeSAbsI32Sop1(opcode, emit_error);
+  case 55:
+    return detail::decodeSAndn1SaveexecB64Sop1(opcode, emit_error);
+  case 56:
+    return detail::decodeSOrn1SaveexecB64Sop1(opcode, emit_error);
+  case 57:
+    return detail::decodeSAndn1WrexecB64Sop1(opcode, emit_error);
+  case 58:
+    return detail::decodeSAndn2WrexecB64Sop1(opcode, emit_error);
+  case 59:
+    return detail::decodeSBitreplicateB64B32Sop1(opcode, emit_error);
+  case 60:
+    return detail::decodeSAndSaveexecB32Sop1(opcode, emit_error);
+  case 61:
+    return detail::decodeSOrSaveexecB32Sop1(opcode, emit_error);
+  case 62:
+    return detail::decodeSXorSaveexecB32Sop1(opcode, emit_error);
+  case 63:
+    return detail::decodeSAndn2SaveexecB32Sop1(opcode, emit_error);
+  case 64:
+    return detail::decodeSOrn2SaveexecB32Sop1(opcode, emit_error);
+  case 65:
+    return detail::decodeSNandSaveexecB32Sop1(opcode, emit_error);
+  case 66:
+    return detail::decodeSNorSaveexecB32Sop1(opcode, emit_error);
+  case 67:
+    return detail::decodeSXnorSaveexecB32Sop1(opcode, emit_error);
+  case 68:
+    return detail::decodeSAndn1SaveexecB32Sop1(opcode, emit_error);
+  case 69:
+    return detail::decodeSOrn1SaveexecB32Sop1(opcode, emit_error);
+  case 70:
+    return detail::decodeSAndn1WrexecB32Sop1(opcode, emit_error);
+  case 71:
+    return detail::decodeSAndn2WrexecB32Sop1(opcode, emit_error);
+  case 73:
+    return detail::decodeSMovrelsd2B32Sop1(opcode, emit_error);
+  default:
+    return DecoderImpl::decodeInvalid(opcode, emit_error);
+  }
+#endif
 }
 
 DecodeResult DecoderImpl::subDecodeSopc(const MachineInst *opcode,
                                         const DecodeErrorEmitter &emit_error) {
   Sopc::OpEncoding op = *reinterpret_cast<const decltype(op) *>(opcode);
+#if RJ_HOST_HAS_X86_64_ELF_REL32
   return sub_decode_sopc[op.op](opcode, emit_error);
+#else
+  switch (static_cast<unsigned>(op.op)) {
+  case 0:
+    return detail::decodeSCmpEqI32Sopc(opcode, emit_error);
+  case 1:
+    return detail::decodeSCmpLgI32Sopc(opcode, emit_error);
+  case 2:
+    return detail::decodeSCmpGtI32Sopc(opcode, emit_error);
+  case 3:
+    return detail::decodeSCmpGeI32Sopc(opcode, emit_error);
+  case 4:
+    return detail::decodeSCmpLtI32Sopc(opcode, emit_error);
+  case 5:
+    return detail::decodeSCmpLeI32Sopc(opcode, emit_error);
+  case 6:
+    return detail::decodeSCmpEqU32Sopc(opcode, emit_error);
+  case 7:
+    return detail::decodeSCmpLgU32Sopc(opcode, emit_error);
+  case 8:
+    return detail::decodeSCmpGtU32Sopc(opcode, emit_error);
+  case 9:
+    return detail::decodeSCmpGeU32Sopc(opcode, emit_error);
+  case 10:
+    return detail::decodeSCmpLtU32Sopc(opcode, emit_error);
+  case 11:
+    return detail::decodeSCmpLeU32Sopc(opcode, emit_error);
+  case 12:
+    return detail::decodeSBitcmp0B32Sopc(opcode, emit_error);
+  case 13:
+    return detail::decodeSBitcmp1B32Sopc(opcode, emit_error);
+  case 14:
+    return detail::decodeSBitcmp0B64Sopc(opcode, emit_error);
+  case 15:
+    return detail::decodeSBitcmp1B64Sopc(opcode, emit_error);
+  case 18:
+    return detail::decodeSCmpEqU64Sopc(opcode, emit_error);
+  case 19:
+    return detail::decodeSCmpLgU64Sopc(opcode, emit_error);
+  default:
+    return DecoderImpl::decodeInvalid(opcode, emit_error);
+  }
+#endif
 }
 
 DecodeResult DecoderImpl::subDecodeSopp(const MachineInst *opcode,
                                         const DecodeErrorEmitter &emit_error) {
   Sopp::OpEncoding op = *reinterpret_cast<const decltype(op) *>(opcode);
+#if RJ_HOST_HAS_X86_64_ELF_REL32
   return sub_decode_sopp[op.op](opcode, emit_error);
+#else
+  switch (static_cast<unsigned>(op.op)) {
+  case 0:
+    return detail::decodeSNopSopp(opcode, emit_error);
+  case 1:
+    return detail::decodeSEndpgmSopp(opcode, emit_error);
+  case 2:
+    return detail::decodeSBranchSopp(opcode, emit_error);
+  case 3:
+    return detail::decodeSWakeupSopp(opcode, emit_error);
+  case 4:
+    return detail::decodeSCbranchScc0Sopp(opcode, emit_error);
+  case 5:
+    return detail::decodeSCbranchScc1Sopp(opcode, emit_error);
+  case 6:
+    return detail::decodeSCbranchVcczSopp(opcode, emit_error);
+  case 7:
+    return detail::decodeSCbranchVccnzSopp(opcode, emit_error);
+  case 8:
+    return detail::decodeSCbranchExeczSopp(opcode, emit_error);
+  case 9:
+    return detail::decodeSCbranchExecnzSopp(opcode, emit_error);
+  case 10:
+    return detail::decodeSBarrierSopp(opcode, emit_error);
+  case 11:
+    return detail::decodeSSetkillSopp(opcode, emit_error);
+  case 12:
+    return detail::decodeSWaitcntSopp(opcode, emit_error);
+  case 13:
+    return detail::decodeSSethaltSopp(opcode, emit_error);
+  case 14:
+    return detail::decodeSSleepSopp(opcode, emit_error);
+  case 15:
+    return detail::decodeSSetprioSopp(opcode, emit_error);
+  case 16:
+    return detail::decodeSSendmsgSopp(opcode, emit_error);
+  case 17:
+    return detail::decodeSSendmsghaltSopp(opcode, emit_error);
+  case 18:
+    return detail::decodeSTrapSopp(opcode, emit_error);
+  case 19:
+    return detail::decodeSIcacheInvSopp(opcode, emit_error);
+  case 20:
+    return detail::decodeSIncperflevelSopp(opcode, emit_error);
+  case 21:
+    return detail::decodeSDecperflevelSopp(opcode, emit_error);
+  case 22:
+    return detail::decodeSTtracedataSopp(opcode, emit_error);
+  case 23:
+    return detail::decodeSCbranchCdbgsysSopp(opcode, emit_error);
+  case 24:
+    return detail::decodeSCbranchCdbguserSopp(opcode, emit_error);
+  case 25:
+    return detail::decodeSCbranchCdbgsysOrUserSopp(opcode, emit_error);
+  case 26:
+    return detail::decodeSCbranchCdbgsysAndUserSopp(opcode, emit_error);
+  case 27:
+    return detail::decodeSEndpgmSavedSopp(opcode, emit_error);
+  case 30:
+    return detail::decodeSEndpgmOrderedPsDoneSopp(opcode, emit_error);
+  case 31:
+    return detail::decodeSCodeEndSopp(opcode, emit_error);
+  case 32:
+    return detail::decodeSInstPrefetchSopp(opcode, emit_error);
+  case 33:
+    return detail::decodeSClauseSopp(opcode, emit_error);
+  case 35:
+    return detail::decodeSWaitcntDepctrSopp(opcode, emit_error);
+  case 36:
+    return detail::decodeSRoundModeSopp(opcode, emit_error);
+  case 37:
+    return detail::decodeSDenormModeSopp(opcode, emit_error);
+  case 40:
+    return detail::decodeSTtracedataImmSopp(opcode, emit_error);
+  default:
+    return DecoderImpl::decodeInvalid(opcode, emit_error);
+  }
+#endif
 }
 
 DecodeResult DecoderImpl::subDecodeVintrp(const MachineInst *opcode,
                                           const DecodeErrorEmitter &emit_error) {
   Vintrp::OpEncoding op = *reinterpret_cast<const decltype(op) *>(opcode);
+#if RJ_HOST_HAS_X86_64_ELF_REL32
   return sub_decode_vintrp[op.op](opcode, emit_error);
+#else
+  switch (static_cast<unsigned>(op.op)) {
+  case 1:
+    return detail::decodeVInterpP2F32Vintrp(opcode, emit_error);
+  case 2:
+    return detail::decodeVInterpMovF32Vintrp(opcode, emit_error);
+  case 3:
+    return DecoderImpl::decodeInvalid(opcode, emit_error);
+  default:
+    return detail::decodeVInterpP1F32Vintrp(opcode, emit_error);
+  }
+#endif
 }
 
 DecodeResult DecoderImpl::subDecodeVop3p(const MachineInst *opcode,
                                          const DecodeErrorEmitter &emit_error) {
   Vop3p::OpEncoding op = *reinterpret_cast<const decltype(op) *>(opcode);
+#if RJ_HOST_HAS_X86_64_ELF_REL32
   return sub_decode_vop3p[op.op](opcode, emit_error);
+#else
+  switch (static_cast<unsigned>(op.op)) {
+  case 0:
+    return detail::decodeVPkMadI16Vop3p(opcode, emit_error);
+  case 1:
+    return detail::decodeVPkMulLoU16Vop3p(opcode, emit_error);
+  case 2:
+    return detail::decodeVPkAddI16Vop3p(opcode, emit_error);
+  case 3:
+    return detail::decodeVPkSubI16Vop3p(opcode, emit_error);
+  case 4:
+    return detail::decodeVPkLshlrevB16Vop3p(opcode, emit_error);
+  case 5:
+    return detail::decodeVPkLshrrevB16Vop3p(opcode, emit_error);
+  case 6:
+    return detail::decodeVPkAshrrevI16Vop3p(opcode, emit_error);
+  case 7:
+    return detail::decodeVPkMaxI16Vop3p(opcode, emit_error);
+  case 8:
+    return detail::decodeVPkMinI16Vop3p(opcode, emit_error);
+  case 9:
+    return detail::decodeVPkMadU16Vop3p(opcode, emit_error);
+  case 10:
+    return detail::decodeVPkAddU16Vop3p(opcode, emit_error);
+  case 11:
+    return detail::decodeVPkSubU16Vop3p(opcode, emit_error);
+  case 12:
+    return detail::decodeVPkMaxU16Vop3p(opcode, emit_error);
+  case 13:
+    return detail::decodeVPkMinU16Vop3p(opcode, emit_error);
+  case 14:
+    return detail::decodeVPkFmaF16Vop3p(opcode, emit_error);
+  case 15:
+    return detail::decodeVPkAddF16Vop3p(opcode, emit_error);
+  case 16:
+    return detail::decodeVPkMulF16Vop3p(opcode, emit_error);
+  case 17:
+    return detail::decodeVPkMinF16Vop3p(opcode, emit_error);
+  case 18:
+    return detail::decodeVPkMaxF16Vop3p(opcode, emit_error);
+  case 19:
+    return detail::decodeVDot2F32F16Vop3p(opcode, emit_error);
+  case 20:
+    return detail::decodeVDot2I32I16Vop3p(opcode, emit_error);
+  case 21:
+    return detail::decodeVDot2U32U16Vop3p(opcode, emit_error);
+  case 22:
+    return detail::decodeVDot4I32I8Vop3p(opcode, emit_error);
+  case 23:
+    return detail::decodeVDot4U32U8Vop3p(opcode, emit_error);
+  case 24:
+    return detail::decodeVDot8I32I4Vop3p(opcode, emit_error);
+  case 25:
+    return detail::decodeVDot8U32U4Vop3p(opcode, emit_error);
+  case 32:
+    return detail::decodeVFmaMixF32Vop3p(opcode, emit_error);
+  case 33:
+    return detail::decodeVFmaMixloF16Vop3p(opcode, emit_error);
+  case 34:
+    return detail::decodeVFmaMixhiF16Vop3p(opcode, emit_error);
+  default:
+    return DecoderImpl::decodeInvalid(opcode, emit_error);
+  }
+#endif
 }
 
 DecodeResult DecoderImpl::subDecodeVop3(const MachineInst *opcode,
                                         const DecodeErrorEmitter &emit_error) {
   Vop3::OpEncoding op = *reinterpret_cast<const decltype(op) *>(opcode);
+#if RJ_HOST_HAS_X86_64_ELF_REL32
   return sub_decode_vop3[op.op](opcode, emit_error);
+#else
+  switch (static_cast<unsigned>(op.op)) {
+  case 0:
+    return detail::decodeVCmpFF32Vop3(opcode, emit_error);
+  case 1:
+    return detail::decodeVCmpLtF32Vop3(opcode, emit_error);
+  case 2:
+    return detail::decodeVCmpEqF32Vop3(opcode, emit_error);
+  case 3:
+    return detail::decodeVCmpLeF32Vop3(opcode, emit_error);
+  case 4:
+    return detail::decodeVCmpGtF32Vop3(opcode, emit_error);
+  case 5:
+    return detail::decodeVCmpLgF32Vop3(opcode, emit_error);
+  case 6:
+    return detail::decodeVCmpGeF32Vop3(opcode, emit_error);
+  case 7:
+    return detail::decodeVCmpOF32Vop3(opcode, emit_error);
+  case 8:
+    return detail::decodeVCmpUF32Vop3(opcode, emit_error);
+  case 9:
+    return detail::decodeVCmpNgeF32Vop3(opcode, emit_error);
+  case 10:
+    return detail::decodeVCmpNlgF32Vop3(opcode, emit_error);
+  case 11:
+    return detail::decodeVCmpNgtF32Vop3(opcode, emit_error);
+  case 12:
+    return detail::decodeVCmpNleF32Vop3(opcode, emit_error);
+  case 13:
+    return detail::decodeVCmpNeqF32Vop3(opcode, emit_error);
+  case 14:
+    return detail::decodeVCmpNltF32Vop3(opcode, emit_error);
+  case 15:
+    return detail::decodeVCmpTruF32Vop3(opcode, emit_error);
+  case 16:
+    return detail::decodeVCmpxFF32Vop3(opcode, emit_error);
+  case 17:
+    return detail::decodeVCmpxLtF32Vop3(opcode, emit_error);
+  case 18:
+    return detail::decodeVCmpxEqF32Vop3(opcode, emit_error);
+  case 19:
+    return detail::decodeVCmpxLeF32Vop3(opcode, emit_error);
+  case 20:
+    return detail::decodeVCmpxGtF32Vop3(opcode, emit_error);
+  case 21:
+    return detail::decodeVCmpxLgF32Vop3(opcode, emit_error);
+  case 22:
+    return detail::decodeVCmpxGeF32Vop3(opcode, emit_error);
+  case 23:
+    return detail::decodeVCmpxOF32Vop3(opcode, emit_error);
+  case 24:
+    return detail::decodeVCmpxUF32Vop3(opcode, emit_error);
+  case 25:
+    return detail::decodeVCmpxNgeF32Vop3(opcode, emit_error);
+  case 26:
+    return detail::decodeVCmpxNlgF32Vop3(opcode, emit_error);
+  case 27:
+    return detail::decodeVCmpxNgtF32Vop3(opcode, emit_error);
+  case 28:
+    return detail::decodeVCmpxNleF32Vop3(opcode, emit_error);
+  case 29:
+    return detail::decodeVCmpxNeqF32Vop3(opcode, emit_error);
+  case 30:
+    return detail::decodeVCmpxNltF32Vop3(opcode, emit_error);
+  case 31:
+    return detail::decodeVCmpxTruF32Vop3(opcode, emit_error);
+  case 32:
+    return detail::decodeVCmpFF64Vop3(opcode, emit_error);
+  case 33:
+    return detail::decodeVCmpLtF64Vop3(opcode, emit_error);
+  case 34:
+    return detail::decodeVCmpEqF64Vop3(opcode, emit_error);
+  case 35:
+    return detail::decodeVCmpLeF64Vop3(opcode, emit_error);
+  case 36:
+    return detail::decodeVCmpGtF64Vop3(opcode, emit_error);
+  case 37:
+    return detail::decodeVCmpLgF64Vop3(opcode, emit_error);
+  case 38:
+    return detail::decodeVCmpGeF64Vop3(opcode, emit_error);
+  case 39:
+    return detail::decodeVCmpOF64Vop3(opcode, emit_error);
+  case 40:
+    return detail::decodeVCmpUF64Vop3(opcode, emit_error);
+  case 41:
+    return detail::decodeVCmpNgeF64Vop3(opcode, emit_error);
+  case 42:
+    return detail::decodeVCmpNlgF64Vop3(opcode, emit_error);
+  case 43:
+    return detail::decodeVCmpNgtF64Vop3(opcode, emit_error);
+  case 44:
+    return detail::decodeVCmpNleF64Vop3(opcode, emit_error);
+  case 45:
+    return detail::decodeVCmpNeqF64Vop3(opcode, emit_error);
+  case 46:
+    return detail::decodeVCmpNltF64Vop3(opcode, emit_error);
+  case 47:
+    return detail::decodeVCmpTruF64Vop3(opcode, emit_error);
+  case 48:
+    return detail::decodeVCmpxFF64Vop3(opcode, emit_error);
+  case 49:
+    return detail::decodeVCmpxLtF64Vop3(opcode, emit_error);
+  case 50:
+    return detail::decodeVCmpxEqF64Vop3(opcode, emit_error);
+  case 51:
+    return detail::decodeVCmpxLeF64Vop3(opcode, emit_error);
+  case 52:
+    return detail::decodeVCmpxGtF64Vop3(opcode, emit_error);
+  case 53:
+    return detail::decodeVCmpxLgF64Vop3(opcode, emit_error);
+  case 54:
+    return detail::decodeVCmpxGeF64Vop3(opcode, emit_error);
+  case 55:
+    return detail::decodeVCmpxOF64Vop3(opcode, emit_error);
+  case 56:
+    return detail::decodeVCmpxUF64Vop3(opcode, emit_error);
+  case 57:
+    return detail::decodeVCmpxNgeF64Vop3(opcode, emit_error);
+  case 58:
+    return detail::decodeVCmpxNlgF64Vop3(opcode, emit_error);
+  case 59:
+    return detail::decodeVCmpxNgtF64Vop3(opcode, emit_error);
+  case 60:
+    return detail::decodeVCmpxNleF64Vop3(opcode, emit_error);
+  case 61:
+    return detail::decodeVCmpxNeqF64Vop3(opcode, emit_error);
+  case 62:
+    return detail::decodeVCmpxNltF64Vop3(opcode, emit_error);
+  case 63:
+    return detail::decodeVCmpxTruF64Vop3(opcode, emit_error);
+  case 128:
+    return detail::decodeVCmpFI32Vop3(opcode, emit_error);
+  case 129:
+    return detail::decodeVCmpLtI32Vop3(opcode, emit_error);
+  case 130:
+    return detail::decodeVCmpEqI32Vop3(opcode, emit_error);
+  case 131:
+    return detail::decodeVCmpLeI32Vop3(opcode, emit_error);
+  case 132:
+    return detail::decodeVCmpGtI32Vop3(opcode, emit_error);
+  case 133:
+    return detail::decodeVCmpNeI32Vop3(opcode, emit_error);
+  case 134:
+    return detail::decodeVCmpGeI32Vop3(opcode, emit_error);
+  case 135:
+    return detail::decodeVCmpTI32Vop3(opcode, emit_error);
+  case 136:
+    return detail::decodeVCmpClassF32Vop3(opcode, emit_error);
+  case 137:
+    return detail::decodeVCmpLtI16Vop3(opcode, emit_error);
+  case 138:
+    return detail::decodeVCmpEqI16Vop3(opcode, emit_error);
+  case 139:
+    return detail::decodeVCmpLeI16Vop3(opcode, emit_error);
+  case 140:
+    return detail::decodeVCmpGtI16Vop3(opcode, emit_error);
+  case 141:
+    return detail::decodeVCmpNeI16Vop3(opcode, emit_error);
+  case 142:
+    return detail::decodeVCmpGeI16Vop3(opcode, emit_error);
+  case 143:
+    return detail::decodeVCmpClassF16Vop3(opcode, emit_error);
+  case 144:
+    return detail::decodeVCmpxFI32Vop3(opcode, emit_error);
+  case 145:
+    return detail::decodeVCmpxLtI32Vop3(opcode, emit_error);
+  case 146:
+    return detail::decodeVCmpxEqI32Vop3(opcode, emit_error);
+  case 147:
+    return detail::decodeVCmpxLeI32Vop3(opcode, emit_error);
+  case 148:
+    return detail::decodeVCmpxGtI32Vop3(opcode, emit_error);
+  case 149:
+    return detail::decodeVCmpxNeI32Vop3(opcode, emit_error);
+  case 150:
+    return detail::decodeVCmpxGeI32Vop3(opcode, emit_error);
+  case 151:
+    return detail::decodeVCmpxTI32Vop3(opcode, emit_error);
+  case 152:
+    return detail::decodeVCmpxClassF32Vop3(opcode, emit_error);
+  case 153:
+    return detail::decodeVCmpxLtI16Vop3(opcode, emit_error);
+  case 154:
+    return detail::decodeVCmpxEqI16Vop3(opcode, emit_error);
+  case 155:
+    return detail::decodeVCmpxLeI16Vop3(opcode, emit_error);
+  case 156:
+    return detail::decodeVCmpxGtI16Vop3(opcode, emit_error);
+  case 157:
+    return detail::decodeVCmpxNeI16Vop3(opcode, emit_error);
+  case 158:
+    return detail::decodeVCmpxGeI16Vop3(opcode, emit_error);
+  case 159:
+    return detail::decodeVCmpxClassF16Vop3(opcode, emit_error);
+  case 160:
+    return detail::decodeVCmpFI64Vop3(opcode, emit_error);
+  case 161:
+    return detail::decodeVCmpLtI64Vop3(opcode, emit_error);
+  case 162:
+    return detail::decodeVCmpEqI64Vop3(opcode, emit_error);
+  case 163:
+    return detail::decodeVCmpLeI64Vop3(opcode, emit_error);
+  case 164:
+    return detail::decodeVCmpGtI64Vop3(opcode, emit_error);
+  case 165:
+    return detail::decodeVCmpNeI64Vop3(opcode, emit_error);
+  case 166:
+    return detail::decodeVCmpGeI64Vop3(opcode, emit_error);
+  case 167:
+    return detail::decodeVCmpTI64Vop3(opcode, emit_error);
+  case 168:
+    return detail::decodeVCmpClassF64Vop3(opcode, emit_error);
+  case 169:
+    return detail::decodeVCmpLtU16Vop3(opcode, emit_error);
+  case 170:
+    return detail::decodeVCmpEqU16Vop3(opcode, emit_error);
+  case 171:
+    return detail::decodeVCmpLeU16Vop3(opcode, emit_error);
+  case 172:
+    return detail::decodeVCmpGtU16Vop3(opcode, emit_error);
+  case 173:
+    return detail::decodeVCmpNeU16Vop3(opcode, emit_error);
+  case 174:
+    return detail::decodeVCmpGeU16Vop3(opcode, emit_error);
+  case 176:
+    return detail::decodeVCmpxFI64Vop3(opcode, emit_error);
+  case 177:
+    return detail::decodeVCmpxLtI64Vop3(opcode, emit_error);
+  case 178:
+    return detail::decodeVCmpxEqI64Vop3(opcode, emit_error);
+  case 179:
+    return detail::decodeVCmpxLeI64Vop3(opcode, emit_error);
+  case 180:
+    return detail::decodeVCmpxGtI64Vop3(opcode, emit_error);
+  case 181:
+    return detail::decodeVCmpxNeI64Vop3(opcode, emit_error);
+  case 182:
+    return detail::decodeVCmpxGeI64Vop3(opcode, emit_error);
+  case 183:
+    return detail::decodeVCmpxTI64Vop3(opcode, emit_error);
+  case 184:
+    return detail::decodeVCmpxClassF64Vop3(opcode, emit_error);
+  case 185:
+    return detail::decodeVCmpxLtU16Vop3(opcode, emit_error);
+  case 186:
+    return detail::decodeVCmpxEqU16Vop3(opcode, emit_error);
+  case 187:
+    return detail::decodeVCmpxLeU16Vop3(opcode, emit_error);
+  case 188:
+    return detail::decodeVCmpxGtU16Vop3(opcode, emit_error);
+  case 189:
+    return detail::decodeVCmpxNeU16Vop3(opcode, emit_error);
+  case 190:
+    return detail::decodeVCmpxGeU16Vop3(opcode, emit_error);
+  case 192:
+    return detail::decodeVCmpFU32Vop3(opcode, emit_error);
+  case 193:
+    return detail::decodeVCmpLtU32Vop3(opcode, emit_error);
+  case 194:
+    return detail::decodeVCmpEqU32Vop3(opcode, emit_error);
+  case 195:
+    return detail::decodeVCmpLeU32Vop3(opcode, emit_error);
+  case 196:
+    return detail::decodeVCmpGtU32Vop3(opcode, emit_error);
+  case 197:
+    return detail::decodeVCmpNeU32Vop3(opcode, emit_error);
+  case 198:
+    return detail::decodeVCmpGeU32Vop3(opcode, emit_error);
+  case 199:
+    return detail::decodeVCmpTU32Vop3(opcode, emit_error);
+  case 200:
+    return detail::decodeVCmpFF16Vop3(opcode, emit_error);
+  case 201:
+    return detail::decodeVCmpLtF16Vop3(opcode, emit_error);
+  case 202:
+    return detail::decodeVCmpEqF16Vop3(opcode, emit_error);
+  case 203:
+    return detail::decodeVCmpLeF16Vop3(opcode, emit_error);
+  case 204:
+    return detail::decodeVCmpGtF16Vop3(opcode, emit_error);
+  case 205:
+    return detail::decodeVCmpLgF16Vop3(opcode, emit_error);
+  case 206:
+    return detail::decodeVCmpGeF16Vop3(opcode, emit_error);
+  case 207:
+    return detail::decodeVCmpOF16Vop3(opcode, emit_error);
+  case 208:
+    return detail::decodeVCmpxFU32Vop3(opcode, emit_error);
+  case 209:
+    return detail::decodeVCmpxLtU32Vop3(opcode, emit_error);
+  case 210:
+    return detail::decodeVCmpxEqU32Vop3(opcode, emit_error);
+  case 211:
+    return detail::decodeVCmpxLeU32Vop3(opcode, emit_error);
+  case 212:
+    return detail::decodeVCmpxGtU32Vop3(opcode, emit_error);
+  case 213:
+    return detail::decodeVCmpxNeU32Vop3(opcode, emit_error);
+  case 214:
+    return detail::decodeVCmpxGeU32Vop3(opcode, emit_error);
+  case 215:
+    return detail::decodeVCmpxTU32Vop3(opcode, emit_error);
+  case 216:
+    return detail::decodeVCmpxFF16Vop3(opcode, emit_error);
+  case 217:
+    return detail::decodeVCmpxLtF16Vop3(opcode, emit_error);
+  case 218:
+    return detail::decodeVCmpxEqF16Vop3(opcode, emit_error);
+  case 219:
+    return detail::decodeVCmpxLeF16Vop3(opcode, emit_error);
+  case 220:
+    return detail::decodeVCmpxGtF16Vop3(opcode, emit_error);
+  case 221:
+    return detail::decodeVCmpxLgF16Vop3(opcode, emit_error);
+  case 222:
+    return detail::decodeVCmpxGeF16Vop3(opcode, emit_error);
+  case 223:
+    return detail::decodeVCmpxOF16Vop3(opcode, emit_error);
+  case 224:
+    return detail::decodeVCmpFU64Vop3(opcode, emit_error);
+  case 225:
+    return detail::decodeVCmpLtU64Vop3(opcode, emit_error);
+  case 226:
+    return detail::decodeVCmpEqU64Vop3(opcode, emit_error);
+  case 227:
+    return detail::decodeVCmpLeU64Vop3(opcode, emit_error);
+  case 228:
+    return detail::decodeVCmpGtU64Vop3(opcode, emit_error);
+  case 229:
+    return detail::decodeVCmpNeU64Vop3(opcode, emit_error);
+  case 230:
+    return detail::decodeVCmpGeU64Vop3(opcode, emit_error);
+  case 231:
+    return detail::decodeVCmpTU64Vop3(opcode, emit_error);
+  case 232:
+    return detail::decodeVCmpUF16Vop3(opcode, emit_error);
+  case 233:
+    return detail::decodeVCmpNgeF16Vop3(opcode, emit_error);
+  case 234:
+    return detail::decodeVCmpNlgF16Vop3(opcode, emit_error);
+  case 235:
+    return detail::decodeVCmpNgtF16Vop3(opcode, emit_error);
+  case 236:
+    return detail::decodeVCmpNleF16Vop3(opcode, emit_error);
+  case 237:
+    return detail::decodeVCmpNeqF16Vop3(opcode, emit_error);
+  case 238:
+    return detail::decodeVCmpNltF16Vop3(opcode, emit_error);
+  case 239:
+    return detail::decodeVCmpTruF16Vop3(opcode, emit_error);
+  case 240:
+    return detail::decodeVCmpxFU64Vop3(opcode, emit_error);
+  case 241:
+    return detail::decodeVCmpxLtU64Vop3(opcode, emit_error);
+  case 242:
+    return detail::decodeVCmpxEqU64Vop3(opcode, emit_error);
+  case 243:
+    return detail::decodeVCmpxLeU64Vop3(opcode, emit_error);
+  case 244:
+    return detail::decodeVCmpxGtU64Vop3(opcode, emit_error);
+  case 245:
+    return detail::decodeVCmpxNeU64Vop3(opcode, emit_error);
+  case 246:
+    return detail::decodeVCmpxGeU64Vop3(opcode, emit_error);
+  case 247:
+    return detail::decodeVCmpxTU64Vop3(opcode, emit_error);
+  case 248:
+    return detail::decodeVCmpxUF16Vop3(opcode, emit_error);
+  case 249:
+    return detail::decodeVCmpxNgeF16Vop3(opcode, emit_error);
+  case 250:
+    return detail::decodeVCmpxNlgF16Vop3(opcode, emit_error);
+  case 251:
+    return detail::decodeVCmpxNgtF16Vop3(opcode, emit_error);
+  case 252:
+    return detail::decodeVCmpxNleF16Vop3(opcode, emit_error);
+  case 253:
+    return detail::decodeVCmpxNeqF16Vop3(opcode, emit_error);
+  case 254:
+    return detail::decodeVCmpxNltF16Vop3(opcode, emit_error);
+  case 255:
+    return detail::decodeVCmpxTruF16Vop3(opcode, emit_error);
+  case 257:
+    return detail::decodeVCndmaskB32Vop3(opcode, emit_error);
+  case 259:
+    return detail::decodeVAddF32Vop3(opcode, emit_error);
+  case 260:
+    return detail::decodeVSubF32Vop3(opcode, emit_error);
+  case 261:
+    return detail::decodeVSubrevF32Vop3(opcode, emit_error);
+  case 262:
+    return detail::decodeVFmacLegacyF32Vop3(opcode, emit_error);
+  case 263:
+    return detail::decodeVMulLegacyF32Vop3(opcode, emit_error);
+  case 264:
+    return detail::decodeVMulF32Vop3(opcode, emit_error);
+  case 265:
+    return detail::decodeVMulI32I24Vop3(opcode, emit_error);
+  case 266:
+    return detail::decodeVMulHiI32I24Vop3(opcode, emit_error);
+  case 267:
+    return detail::decodeVMulU32U24Vop3(opcode, emit_error);
+  case 268:
+    return detail::decodeVMulHiU32U24Vop3(opcode, emit_error);
+  case 271:
+    return detail::decodeVMinF32Vop3(opcode, emit_error);
+  case 272:
+    return detail::decodeVMaxF32Vop3(opcode, emit_error);
+  case 273:
+    return detail::decodeVMinI32Vop3(opcode, emit_error);
+  case 274:
+    return detail::decodeVMaxI32Vop3(opcode, emit_error);
+  case 275:
+    return detail::decodeVMinU32Vop3(opcode, emit_error);
+  case 276:
+    return detail::decodeVMaxU32Vop3(opcode, emit_error);
+  case 278:
+    return detail::decodeVLshrrevB32Vop3(opcode, emit_error);
+  case 280:
+    return detail::decodeVAshrrevI32Vop3(opcode, emit_error);
+  case 282:
+    return detail::decodeVLshlrevB32Vop3(opcode, emit_error);
+  case 283:
+    return detail::decodeVAndB32Vop3(opcode, emit_error);
+  case 284:
+    return detail::decodeVOrB32Vop3(opcode, emit_error);
+  case 285:
+    return detail::decodeVXorB32Vop3(opcode, emit_error);
+  case 286:
+    return detail::decodeVXnorB32Vop3(opcode, emit_error);
+  case 293:
+    return detail::decodeVAddNcU32Vop3(opcode, emit_error);
+  case 294:
+    return detail::decodeVSubNcU32Vop3(opcode, emit_error);
+  case 295:
+    return detail::decodeVSubrevNcU32Vop3(opcode, emit_error);
+  case 296:
+    return detail::decodeVAddCoCiU32Vop3SdstEnc(opcode, emit_error);
+  case 297:
+    return detail::decodeVSubCoCiU32Vop3SdstEnc(opcode, emit_error);
+  case 298:
+    return detail::decodeVSubrevCoCiU32Vop3SdstEnc(opcode, emit_error);
+  case 299:
+    return detail::decodeVFmacF32Vop3(opcode, emit_error);
+  case 303:
+    return detail::decodeVCvtPkrtzF16F32Vop3(opcode, emit_error);
+  case 306:
+    return detail::decodeVAddF16Vop3(opcode, emit_error);
+  case 307:
+    return detail::decodeVSubF16Vop3(opcode, emit_error);
+  case 308:
+    return detail::decodeVSubrevF16Vop3(opcode, emit_error);
+  case 309:
+    return detail::decodeVMulF16Vop3(opcode, emit_error);
+  case 310:
+    return detail::decodeVFmacF16Vop3(opcode, emit_error);
+  case 313:
+    return detail::decodeVMaxF16Vop3(opcode, emit_error);
+  case 314:
+    return detail::decodeVMinF16Vop3(opcode, emit_error);
+  case 315:
+    return detail::decodeVLdexpF16Vop3(opcode, emit_error);
+  case 320:
+    return detail::decodeVFmaLegacyF32Vop3(opcode, emit_error);
+  case 322:
+    return detail::decodeVMadI32I24Vop3(opcode, emit_error);
+  case 323:
+    return detail::decodeVMadU32U24Vop3(opcode, emit_error);
+  case 324:
+    return detail::decodeVCubeidF32Vop3(opcode, emit_error);
+  case 325:
+    return detail::decodeVCubescF32Vop3(opcode, emit_error);
+  case 326:
+    return detail::decodeVCubetcF32Vop3(opcode, emit_error);
+  case 327:
+    return detail::decodeVCubemaF32Vop3(opcode, emit_error);
+  case 328:
+    return detail::decodeVBfeU32Vop3(opcode, emit_error);
+  case 329:
+    return detail::decodeVBfeI32Vop3(opcode, emit_error);
+  case 330:
+    return detail::decodeVBfiB32Vop3(opcode, emit_error);
+  case 331:
+    return detail::decodeVFmaF32Vop3(opcode, emit_error);
+  case 332:
+    return detail::decodeVFmaF64Vop3(opcode, emit_error);
+  case 333:
+    return detail::decodeVLerpU8Vop3(opcode, emit_error);
+  case 334:
+    return detail::decodeVAlignbitB32Vop3(opcode, emit_error);
+  case 335:
+    return detail::decodeVAlignbyteB32Vop3(opcode, emit_error);
+  case 336:
+    return detail::decodeVMullitF32Vop3(opcode, emit_error);
+  case 337:
+    return detail::decodeVMin3F32Vop3(opcode, emit_error);
+  case 338:
+    return detail::decodeVMin3I32Vop3(opcode, emit_error);
+  case 339:
+    return detail::decodeVMin3U32Vop3(opcode, emit_error);
+  case 340:
+    return detail::decodeVMax3F32Vop3(opcode, emit_error);
+  case 341:
+    return detail::decodeVMax3I32Vop3(opcode, emit_error);
+  case 342:
+    return detail::decodeVMax3U32Vop3(opcode, emit_error);
+  case 343:
+    return detail::decodeVMed3F32Vop3(opcode, emit_error);
+  case 344:
+    return detail::decodeVMed3I32Vop3(opcode, emit_error);
+  case 345:
+    return detail::decodeVMed3U32Vop3(opcode, emit_error);
+  case 346:
+    return detail::decodeVSadU8Vop3(opcode, emit_error);
+  case 347:
+    return detail::decodeVSadHiU8Vop3(opcode, emit_error);
+  case 348:
+    return detail::decodeVSadU16Vop3(opcode, emit_error);
+  case 349:
+    return detail::decodeVSadU32Vop3(opcode, emit_error);
+  case 350:
+    return detail::decodeVCvtPkU8F32Vop3(opcode, emit_error);
+  case 351:
+    return detail::decodeVDivFixupF32Vop3(opcode, emit_error);
+  case 352:
+    return detail::decodeVDivFixupF64Vop3(opcode, emit_error);
+  case 356:
+    return detail::decodeVAddF64Vop3(opcode, emit_error);
+  case 357:
+    return detail::decodeVMulF64Vop3(opcode, emit_error);
+  case 358:
+    return detail::decodeVMinF64Vop3(opcode, emit_error);
+  case 359:
+    return detail::decodeVMaxF64Vop3(opcode, emit_error);
+  case 360:
+    return detail::decodeVLdexpF64Vop3(opcode, emit_error);
+  case 361:
+    return detail::decodeVMulLoU32Vop3(opcode, emit_error);
+  case 362:
+    return detail::decodeVMulHiU32Vop3(opcode, emit_error);
+  case 364:
+    return detail::decodeVMulHiI32Vop3(opcode, emit_error);
+  case 365:
+    return detail::decodeVDivScaleF32Vop3SdstEnc(opcode, emit_error);
+  case 366:
+    return detail::decodeVDivScaleF64Vop3SdstEnc(opcode, emit_error);
+  case 367:
+    return detail::decodeVDivFmasF32Vop3(opcode, emit_error);
+  case 368:
+    return detail::decodeVDivFmasF64Vop3(opcode, emit_error);
+  case 369:
+    return detail::decodeVMsadU8Vop3(opcode, emit_error);
+  case 370:
+    return detail::decodeVQsadPkU16U8Vop3(opcode, emit_error);
+  case 371:
+    return detail::decodeVMqsadPkU16U8Vop3(opcode, emit_error);
+  case 372:
+    return detail::decodeVTrigPreopF64Vop3(opcode, emit_error);
+  case 373:
+    return detail::decodeVMqsadU32U8Vop3(opcode, emit_error);
+  case 374:
+    return detail::decodeVMadU64U32Vop3SdstEnc(opcode, emit_error);
+  case 375:
+    return detail::decodeVMadI64I32Vop3SdstEnc(opcode, emit_error);
+  case 376:
+    return detail::decodeVXor3B32Vop3(opcode, emit_error);
+  case 384:
+    return detail::decodeVNopVop3(opcode, emit_error);
+  case 385:
+    return detail::decodeVMovB32Vop3(opcode, emit_error);
+  case 386:
+    return detail::decodeVReadfirstlaneB32Vop3(opcode, emit_error);
+  case 387:
+    return detail::decodeVCvtI32F64Vop3(opcode, emit_error);
+  case 388:
+    return detail::decodeVCvtF64I32Vop3(opcode, emit_error);
+  case 389:
+    return detail::decodeVCvtF32I32Vop3(opcode, emit_error);
+  case 390:
+    return detail::decodeVCvtF32U32Vop3(opcode, emit_error);
+  case 391:
+    return detail::decodeVCvtU32F32Vop3(opcode, emit_error);
+  case 392:
+    return detail::decodeVCvtI32F32Vop3(opcode, emit_error);
+  case 394:
+    return detail::decodeVCvtF16F32Vop3(opcode, emit_error);
+  case 395:
+    return detail::decodeVCvtF32F16Vop3(opcode, emit_error);
+  case 396:
+    return detail::decodeVCvtRpiI32F32Vop3(opcode, emit_error);
+  case 397:
+    return detail::decodeVCvtFlrI32F32Vop3(opcode, emit_error);
+  case 398:
+    return detail::decodeVCvtOffF32I4Vop3(opcode, emit_error);
+  case 399:
+    return detail::decodeVCvtF32F64Vop3(opcode, emit_error);
+  case 400:
+    return detail::decodeVCvtF64F32Vop3(opcode, emit_error);
+  case 401:
+    return detail::decodeVCvtF32Ubyte0Vop3(opcode, emit_error);
+  case 402:
+    return detail::decodeVCvtF32Ubyte1Vop3(opcode, emit_error);
+  case 403:
+    return detail::decodeVCvtF32Ubyte2Vop3(opcode, emit_error);
+  case 404:
+    return detail::decodeVCvtF32Ubyte3Vop3(opcode, emit_error);
+  case 405:
+    return detail::decodeVCvtU32F64Vop3(opcode, emit_error);
+  case 406:
+    return detail::decodeVCvtF64U32Vop3(opcode, emit_error);
+  case 407:
+    return detail::decodeVTruncF64Vop3(opcode, emit_error);
+  case 408:
+    return detail::decodeVCeilF64Vop3(opcode, emit_error);
+  case 409:
+    return detail::decodeVRndneF64Vop3(opcode, emit_error);
+  case 410:
+    return detail::decodeVFloorF64Vop3(opcode, emit_error);
+  case 411:
+    return detail::decodeVPipeflushVop3(opcode, emit_error);
+  case 416:
+    return detail::decodeVFractF32Vop3(opcode, emit_error);
+  case 417:
+    return detail::decodeVTruncF32Vop3(opcode, emit_error);
+  case 418:
+    return detail::decodeVCeilF32Vop3(opcode, emit_error);
+  case 419:
+    return detail::decodeVRndneF32Vop3(opcode, emit_error);
+  case 420:
+    return detail::decodeVFloorF32Vop3(opcode, emit_error);
+  case 421:
+    return detail::decodeVExpF32Vop3(opcode, emit_error);
+  case 423:
+    return detail::decodeVLogF32Vop3(opcode, emit_error);
+  case 426:
+    return detail::decodeVRcpF32Vop3(opcode, emit_error);
+  case 427:
+    return detail::decodeVRcpIflagF32Vop3(opcode, emit_error);
+  case 430:
+    return detail::decodeVRsqF32Vop3(opcode, emit_error);
+  case 431:
+    return detail::decodeVRcpF64Vop3(opcode, emit_error);
+  case 433:
+    return detail::decodeVRsqF64Vop3(opcode, emit_error);
+  case 435:
+    return detail::decodeVSqrtF32Vop3(opcode, emit_error);
+  case 436:
+    return detail::decodeVSqrtF64Vop3(opcode, emit_error);
+  case 437:
+    return detail::decodeVSinF32Vop3(opcode, emit_error);
+  case 438:
+    return detail::decodeVCosF32Vop3(opcode, emit_error);
+  case 439:
+    return detail::decodeVNotB32Vop3(opcode, emit_error);
+  case 440:
+    return detail::decodeVBfrevB32Vop3(opcode, emit_error);
+  case 441:
+    return detail::decodeVFfbhU32Vop3(opcode, emit_error);
+  case 442:
+    return detail::decodeVFfblB32Vop3(opcode, emit_error);
+  case 443:
+    return detail::decodeVFfbhI32Vop3(opcode, emit_error);
+  case 444:
+    return detail::decodeVFrexpExpI32F64Vop3(opcode, emit_error);
+  case 445:
+    return detail::decodeVFrexpMantF64Vop3(opcode, emit_error);
+  case 446:
+    return detail::decodeVFractF64Vop3(opcode, emit_error);
+  case 447:
+    return detail::decodeVFrexpExpI32F32Vop3(opcode, emit_error);
+  case 448:
+    return detail::decodeVFrexpMantF32Vop3(opcode, emit_error);
+  case 449:
+    return detail::decodeVClrexcpVop3(opcode, emit_error);
+  case 450:
+    return detail::decodeVMovreldB32Vop3(opcode, emit_error);
+  case 464:
+    return detail::decodeVCvtF16U16Vop3(opcode, emit_error);
+  case 465:
+    return detail::decodeVCvtF16I16Vop3(opcode, emit_error);
+  case 466:
+    return detail::decodeVCvtU16F16Vop3(opcode, emit_error);
+  case 467:
+    return detail::decodeVCvtI16F16Vop3(opcode, emit_error);
+  case 468:
+    return detail::decodeVRcpF16Vop3(opcode, emit_error);
+  case 469:
+    return detail::decodeVSqrtF16Vop3(opcode, emit_error);
+  case 470:
+    return detail::decodeVRsqF16Vop3(opcode, emit_error);
+  case 471:
+    return detail::decodeVLogF16Vop3(opcode, emit_error);
+  case 472:
+    return detail::decodeVExpF16Vop3(opcode, emit_error);
+  case 473:
+    return detail::decodeVFrexpMantF16Vop3(opcode, emit_error);
+  case 474:
+    return detail::decodeVFrexpExpI16F16Vop3(opcode, emit_error);
+  case 475:
+    return detail::decodeVFloorF16Vop3(opcode, emit_error);
+  case 476:
+    return detail::decodeVCeilF16Vop3(opcode, emit_error);
+  case 477:
+    return detail::decodeVTruncF16Vop3(opcode, emit_error);
+  case 478:
+    return detail::decodeVRndneF16Vop3(opcode, emit_error);
+  case 479:
+    return detail::decodeVFractF16Vop3(opcode, emit_error);
+  case 480:
+    return detail::decodeVSinF16Vop3(opcode, emit_error);
+  case 481:
+    return detail::decodeVCosF16Vop3(opcode, emit_error);
+  case 482:
+    return detail::decodeVSatPkU8I16Vop3(opcode, emit_error);
+  case 483:
+    return detail::decodeVCvtNormI16F16Vop3(opcode, emit_error);
+  case 484:
+    return detail::decodeVCvtNormU16F16Vop3(opcode, emit_error);
+  case 512:
+    return detail::decodeVInterpP1F32Vop3(opcode, emit_error);
+  case 513:
+    return detail::decodeVInterpP2F32Vop3(opcode, emit_error);
+  case 514:
+    return detail::decodeVInterpMovF32Vop3(opcode, emit_error);
+  case 767:
+    return detail::decodeVLshlrevB64Vop3(opcode, emit_error);
+  case 768:
+    return detail::decodeVLshrrevB64Vop3(opcode, emit_error);
+  case 769:
+    return detail::decodeVAshrrevI64Vop3(opcode, emit_error);
+  case 771:
+    return detail::decodeVAddNcU16Vop3(opcode, emit_error);
+  case 772:
+    return detail::decodeVSubNcU16Vop3(opcode, emit_error);
+  case 773:
+    return detail::decodeVMulLoU16Vop3(opcode, emit_error);
+  case 775:
+    return detail::decodeVLshrrevB16Vop3(opcode, emit_error);
+  case 776:
+    return detail::decodeVAshrrevI16Vop3(opcode, emit_error);
+  case 777:
+    return detail::decodeVMaxU16Vop3(opcode, emit_error);
+  case 778:
+    return detail::decodeVMaxI16Vop3(opcode, emit_error);
+  case 779:
+    return detail::decodeVMinU16Vop3(opcode, emit_error);
+  case 780:
+    return detail::decodeVMinI16Vop3(opcode, emit_error);
+  case 781:
+    return detail::decodeVAddNcI16Vop3(opcode, emit_error);
+  case 782:
+    return detail::decodeVSubNcI16Vop3(opcode, emit_error);
+  case 783:
+    return detail::decodeVAddCoU32Vop3SdstEnc(opcode, emit_error);
+  case 784:
+    return detail::decodeVSubCoU32Vop3SdstEnc(opcode, emit_error);
+  case 785:
+    return detail::decodeVPackB32F16Vop3(opcode, emit_error);
+  case 786:
+    return detail::decodeVCvtPknormI16F16Vop3(opcode, emit_error);
+  case 787:
+    return detail::decodeVCvtPknormU16F16Vop3(opcode, emit_error);
+  case 788:
+    return detail::decodeVLshlrevB16Vop3(opcode, emit_error);
+  case 793:
+    return detail::decodeVSubrevCoU32Vop3SdstEnc(opcode, emit_error);
+  case 832:
+    return detail::decodeVMadU16Vop3(opcode, emit_error);
+  case 834:
+    return detail::decodeVInterpP1llF16Vop3(opcode, emit_error);
+  case 835:
+    return detail::decodeVInterpP1lvF16Vop3(opcode, emit_error);
+  case 836:
+    return detail::decodeVPermB32Vop3(opcode, emit_error);
+  case 837:
+    return detail::decodeVXadU32Vop3(opcode, emit_error);
+  case 838:
+    return detail::decodeVLshlAddU32Vop3(opcode, emit_error);
+  case 839:
+    return detail::decodeVAddLshlU32Vop3(opcode, emit_error);
+  case 843:
+    return detail::decodeVFmaF16Vop3(opcode, emit_error);
+  case 849:
+    return detail::decodeVMin3F16Vop3(opcode, emit_error);
+  case 850:
+    return detail::decodeVMin3I16Vop3(opcode, emit_error);
+  case 851:
+    return detail::decodeVMin3U16Vop3(opcode, emit_error);
+  case 852:
+    return detail::decodeVMax3F16Vop3(opcode, emit_error);
+  case 853:
+    return detail::decodeVMax3I16Vop3(opcode, emit_error);
+  case 854:
+    return detail::decodeVMax3U16Vop3(opcode, emit_error);
+  case 855:
+    return detail::decodeVMed3F16Vop3(opcode, emit_error);
+  case 856:
+    return detail::decodeVMed3I16Vop3(opcode, emit_error);
+  case 857:
+    return detail::decodeVMed3U16Vop3(opcode, emit_error);
+  case 858:
+    return detail::decodeVInterpP2F16Vop3(opcode, emit_error);
+  case 862:
+    return detail::decodeVMadI16Vop3(opcode, emit_error);
+  case 863:
+    return detail::decodeVDivFixupF16Vop3(opcode, emit_error);
+  case 864:
+    return detail::decodeVReadlaneB32Vop3(opcode, emit_error);
+  case 865:
+    return detail::decodeVWritelaneB32Vop3(opcode, emit_error);
+  case 866:
+    return detail::decodeVLdexpF32Vop3(opcode, emit_error);
+  case 867:
+    return detail::decodeVBfmB32Vop3(opcode, emit_error);
+  case 868:
+    return detail::decodeVBcntU32B32Vop3(opcode, emit_error);
+  case 869:
+    return detail::decodeVMbcntLoU32B32Vop3(opcode, emit_error);
+  case 870:
+    return detail::decodeVMbcntHiU32B32Vop3(opcode, emit_error);
+  case 872:
+    return detail::decodeVCvtPknormI16F32Vop3(opcode, emit_error);
+  case 873:
+    return detail::decodeVCvtPknormU16F32Vop3(opcode, emit_error);
+  case 874:
+    return detail::decodeVCvtPkU16U32Vop3(opcode, emit_error);
+  case 875:
+    return detail::decodeVCvtPkI16I32Vop3(opcode, emit_error);
+  case 877:
+    return detail::decodeVAdd3U32Vop3(opcode, emit_error);
+  case 879:
+    return detail::decodeVLshlOrB32Vop3(opcode, emit_error);
+  case 881:
+    return detail::decodeVAndOrB32Vop3(opcode, emit_error);
+  case 882:
+    return detail::decodeVOr3B32Vop3(opcode, emit_error);
+  case 883:
+    return detail::decodeVMadU32U16Vop3(opcode, emit_error);
+  case 885:
+    return detail::decodeVMadI32I16Vop3(opcode, emit_error);
+  case 886:
+    return detail::decodeVSubNcI32Vop3(opcode, emit_error);
+  case 887:
+    return detail::decodeVPermlane16B32Vop3(opcode, emit_error);
+  case 888:
+    return detail::decodeVPermlanex16B32Vop3(opcode, emit_error);
+  case 895:
+    return detail::decodeVAddNcI32Vop3(opcode, emit_error);
+  default:
+    return DecoderImpl::decodeInvalid(opcode, emit_error);
+  }
+#endif
 }
 
 DecodeResult DecoderImpl::subDecodeDs(const MachineInst *opcode,
                                       const DecodeErrorEmitter &emit_error) {
   Ds::OpEncoding op = *reinterpret_cast<const decltype(op) *>(opcode);
+#if RJ_HOST_HAS_X86_64_ELF_REL32
   return sub_decode_ds[op.op](opcode, emit_error);
+#else
+  switch (static_cast<unsigned>(op.op)) {
+  case 0:
+    return detail::decodeDsAddU32Ds(opcode, emit_error);
+  case 1:
+    return detail::decodeDsSubU32Ds(opcode, emit_error);
+  case 2:
+    return detail::decodeDsRsubU32Ds(opcode, emit_error);
+  case 3:
+    return detail::decodeDsIncU32Ds(opcode, emit_error);
+  case 4:
+    return detail::decodeDsDecU32Ds(opcode, emit_error);
+  case 5:
+    return detail::decodeDsMinI32Ds(opcode, emit_error);
+  case 6:
+    return detail::decodeDsMaxI32Ds(opcode, emit_error);
+  case 7:
+    return detail::decodeDsMinU32Ds(opcode, emit_error);
+  case 8:
+    return detail::decodeDsMaxU32Ds(opcode, emit_error);
+  case 9:
+    return detail::decodeDsAndB32Ds(opcode, emit_error);
+  case 10:
+    return detail::decodeDsOrB32Ds(opcode, emit_error);
+  case 11:
+    return detail::decodeDsXorB32Ds(opcode, emit_error);
+  case 12:
+    return detail::decodeDsMskorB32Ds(opcode, emit_error);
+  case 13:
+    return detail::decodeDsWriteB32Ds(opcode, emit_error);
+  case 14:
+    return detail::decodeDsWrite2B32Ds(opcode, emit_error);
+  case 15:
+    return detail::decodeDsWrite2st64B32Ds(opcode, emit_error);
+  case 16:
+    return detail::decodeDsCmpstB32Ds(opcode, emit_error);
+  case 17:
+    return detail::decodeDsCmpstF32Ds(opcode, emit_error);
+  case 18:
+    return detail::decodeDsMinF32Ds(opcode, emit_error);
+  case 19:
+    return detail::decodeDsMaxF32Ds(opcode, emit_error);
+  case 20:
+    return detail::decodeDsNopDs(opcode, emit_error);
+  case 21:
+    return detail::decodeDsAddF32Ds(opcode, emit_error);
+  case 24:
+    return detail::decodeDsGwsSemaReleaseAllDs(opcode, emit_error);
+  case 25:
+    return detail::decodeDsGwsInitDs(opcode, emit_error);
+  case 26:
+    return detail::decodeDsGwsSemaVDs(opcode, emit_error);
+  case 27:
+    return detail::decodeDsGwsSemaBrDs(opcode, emit_error);
+  case 28:
+    return detail::decodeDsGwsSemaPDs(opcode, emit_error);
+  case 29:
+    return detail::decodeDsGwsBarrierDs(opcode, emit_error);
+  case 30:
+    return detail::decodeDsWriteB8Ds(opcode, emit_error);
+  case 31:
+    return detail::decodeDsWriteB16Ds(opcode, emit_error);
+  case 32:
+    return detail::decodeDsAddRtnU32Ds(opcode, emit_error);
+  case 33:
+    return detail::decodeDsSubRtnU32Ds(opcode, emit_error);
+  case 34:
+    return detail::decodeDsRsubRtnU32Ds(opcode, emit_error);
+  case 35:
+    return detail::decodeDsIncRtnU32Ds(opcode, emit_error);
+  case 36:
+    return detail::decodeDsDecRtnU32Ds(opcode, emit_error);
+  case 37:
+    return detail::decodeDsMinRtnI32Ds(opcode, emit_error);
+  case 38:
+    return detail::decodeDsMaxRtnI32Ds(opcode, emit_error);
+  case 39:
+    return detail::decodeDsMinRtnU32Ds(opcode, emit_error);
+  case 40:
+    return detail::decodeDsMaxRtnU32Ds(opcode, emit_error);
+  case 41:
+    return detail::decodeDsAndRtnB32Ds(opcode, emit_error);
+  case 42:
+    return detail::decodeDsOrRtnB32Ds(opcode, emit_error);
+  case 43:
+    return detail::decodeDsXorRtnB32Ds(opcode, emit_error);
+  case 44:
+    return detail::decodeDsMskorRtnB32Ds(opcode, emit_error);
+  case 45:
+    return detail::decodeDsWrxchgRtnB32Ds(opcode, emit_error);
+  case 46:
+    return detail::decodeDsWrxchg2RtnB32Ds(opcode, emit_error);
+  case 47:
+    return detail::decodeDsWrxchg2st64RtnB32Ds(opcode, emit_error);
+  case 48:
+    return detail::decodeDsCmpstRtnB32Ds(opcode, emit_error);
+  case 49:
+    return detail::decodeDsCmpstRtnF32Ds(opcode, emit_error);
+  case 50:
+    return detail::decodeDsMinRtnF32Ds(opcode, emit_error);
+  case 51:
+    return detail::decodeDsMaxRtnF32Ds(opcode, emit_error);
+  case 52:
+    return detail::decodeDsWrapRtnB32Ds(opcode, emit_error);
+  case 53:
+    return detail::decodeDsSwizzleB32Ds(opcode, emit_error);
+  case 54:
+    return detail::decodeDsReadB32Ds(opcode, emit_error);
+  case 55:
+    return detail::decodeDsRead2B32Ds(opcode, emit_error);
+  case 56:
+    return detail::decodeDsRead2st64B32Ds(opcode, emit_error);
+  case 57:
+    return detail::decodeDsReadI8Ds(opcode, emit_error);
+  case 58:
+    return detail::decodeDsReadU8Ds(opcode, emit_error);
+  case 59:
+    return detail::decodeDsReadI16Ds(opcode, emit_error);
+  case 60:
+    return detail::decodeDsReadU16Ds(opcode, emit_error);
+  case 61:
+    return detail::decodeDsConsumeDs(opcode, emit_error);
+  case 62:
+    return detail::decodeDsAppendDs(opcode, emit_error);
+  case 63:
+    return detail::decodeDsOrderedCountDs(opcode, emit_error);
+  case 64:
+    return detail::decodeDsAddU64Ds(opcode, emit_error);
+  case 65:
+    return detail::decodeDsSubU64Ds(opcode, emit_error);
+  case 66:
+    return detail::decodeDsRsubU64Ds(opcode, emit_error);
+  case 67:
+    return detail::decodeDsIncU64Ds(opcode, emit_error);
+  case 68:
+    return detail::decodeDsDecU64Ds(opcode, emit_error);
+  case 69:
+    return detail::decodeDsMinI64Ds(opcode, emit_error);
+  case 70:
+    return detail::decodeDsMaxI64Ds(opcode, emit_error);
+  case 71:
+    return detail::decodeDsMinU64Ds(opcode, emit_error);
+  case 72:
+    return detail::decodeDsMaxU64Ds(opcode, emit_error);
+  case 73:
+    return detail::decodeDsAndB64Ds(opcode, emit_error);
+  case 74:
+    return detail::decodeDsOrB64Ds(opcode, emit_error);
+  case 75:
+    return detail::decodeDsXorB64Ds(opcode, emit_error);
+  case 76:
+    return detail::decodeDsMskorB64Ds(opcode, emit_error);
+  case 77:
+    return detail::decodeDsWriteB64Ds(opcode, emit_error);
+  case 78:
+    return detail::decodeDsWrite2B64Ds(opcode, emit_error);
+  case 79:
+    return detail::decodeDsWrite2st64B64Ds(opcode, emit_error);
+  case 80:
+    return detail::decodeDsCmpstB64Ds(opcode, emit_error);
+  case 81:
+    return detail::decodeDsCmpstF64Ds(opcode, emit_error);
+  case 82:
+    return detail::decodeDsMinF64Ds(opcode, emit_error);
+  case 83:
+    return detail::decodeDsMaxF64Ds(opcode, emit_error);
+  case 85:
+    return detail::decodeDsAddRtnF32Ds(opcode, emit_error);
+  case 96:
+    return detail::decodeDsAddRtnU64Ds(opcode, emit_error);
+  case 97:
+    return detail::decodeDsSubRtnU64Ds(opcode, emit_error);
+  case 98:
+    return detail::decodeDsRsubRtnU64Ds(opcode, emit_error);
+  case 99:
+    return detail::decodeDsIncRtnU64Ds(opcode, emit_error);
+  case 100:
+    return detail::decodeDsDecRtnU64Ds(opcode, emit_error);
+  case 101:
+    return detail::decodeDsMinRtnI64Ds(opcode, emit_error);
+  case 102:
+    return detail::decodeDsMaxRtnI64Ds(opcode, emit_error);
+  case 103:
+    return detail::decodeDsMinRtnU64Ds(opcode, emit_error);
+  case 104:
+    return detail::decodeDsMaxRtnU64Ds(opcode, emit_error);
+  case 105:
+    return detail::decodeDsAndRtnB64Ds(opcode, emit_error);
+  case 106:
+    return detail::decodeDsOrRtnB64Ds(opcode, emit_error);
+  case 107:
+    return detail::decodeDsXorRtnB64Ds(opcode, emit_error);
+  case 108:
+    return detail::decodeDsMskorRtnB64Ds(opcode, emit_error);
+  case 109:
+    return detail::decodeDsWrxchgRtnB64Ds(opcode, emit_error);
+  case 110:
+    return detail::decodeDsWrxchg2RtnB64Ds(opcode, emit_error);
+  case 111:
+    return detail::decodeDsWrxchg2st64RtnB64Ds(opcode, emit_error);
+  case 112:
+    return detail::decodeDsCmpstRtnB64Ds(opcode, emit_error);
+  case 113:
+    return detail::decodeDsCmpstRtnF64Ds(opcode, emit_error);
+  case 114:
+    return detail::decodeDsMinRtnF64Ds(opcode, emit_error);
+  case 115:
+    return detail::decodeDsMaxRtnF64Ds(opcode, emit_error);
+  case 118:
+    return detail::decodeDsReadB64Ds(opcode, emit_error);
+  case 119:
+    return detail::decodeDsRead2B64Ds(opcode, emit_error);
+  case 120:
+    return detail::decodeDsRead2st64B64Ds(opcode, emit_error);
+  case 126:
+    return detail::decodeDsCondxchg32RtnB64Ds(opcode, emit_error);
+  case 160:
+    return detail::decodeDsWriteB8D16HiDs(opcode, emit_error);
+  case 161:
+    return detail::decodeDsWriteB16D16HiDs(opcode, emit_error);
+  case 162:
+    return detail::decodeDsReadU8D16Ds(opcode, emit_error);
+  case 163:
+    return detail::decodeDsReadU8D16HiDs(opcode, emit_error);
+  case 164:
+    return detail::decodeDsReadI8D16Ds(opcode, emit_error);
+  case 165:
+    return detail::decodeDsReadI8D16HiDs(opcode, emit_error);
+  case 166:
+    return detail::decodeDsReadU16D16Ds(opcode, emit_error);
+  case 167:
+    return detail::decodeDsReadU16D16HiDs(opcode, emit_error);
+  case 176:
+    return detail::decodeDsWriteAddtidB32Ds(opcode, emit_error);
+  case 177:
+    return detail::decodeDsReadAddtidB32Ds(opcode, emit_error);
+  case 178:
+    return detail::decodeDsPermuteB32Ds(opcode, emit_error);
+  case 179:
+    return detail::decodeDsBpermuteB32Ds(opcode, emit_error);
+  case 222:
+    return detail::decodeDsWriteB96Ds(opcode, emit_error);
+  case 223:
+    return detail::decodeDsWriteB128Ds(opcode, emit_error);
+  case 254:
+    return detail::decodeDsReadB96Ds(opcode, emit_error);
+  case 255:
+    return detail::decodeDsReadB128Ds(opcode, emit_error);
+  default:
+    return DecoderImpl::decodeInvalid(opcode, emit_error);
+  }
+#endif
 }
 
 DecodeResult DecoderImpl::subDecodeFlat(const MachineInst *opcode,
                                         const DecodeErrorEmitter &emit_error) {
   Flat::OpEncoding op = *reinterpret_cast<const decltype(op) *>(opcode);
+#if RJ_HOST_HAS_X86_64_ELF_REL32
   return sub_decode_flat[op.op](opcode, emit_error);
+#else
+  switch (static_cast<unsigned>(op.op)) {
+  case 8:
+    return detail::decodeFlatLoadUbyteFlat(opcode, emit_error);
+  case 9:
+    return detail::decodeFlatLoadSbyteFlat(opcode, emit_error);
+  case 10:
+    return detail::decodeFlatLoadUshortFlat(opcode, emit_error);
+  case 11:
+    return detail::decodeFlatLoadSshortFlat(opcode, emit_error);
+  case 12:
+    return detail::decodeFlatLoadDwordFlat(opcode, emit_error);
+  case 13:
+    return detail::decodeFlatLoadDwordx2Flat(opcode, emit_error);
+  case 14:
+    return detail::decodeFlatLoadDwordx4Flat(opcode, emit_error);
+  case 15:
+    return detail::decodeFlatLoadDwordx3Flat(opcode, emit_error);
+  case 22:
+    return detail::decodeGlobalLoadDwordAddtidFlat(opcode, emit_error);
+  case 23:
+    return detail::decodeGlobalStoreDwordAddtidFlat(opcode, emit_error);
+  case 24:
+    return detail::decodeFlatStoreByteFlat(opcode, emit_error);
+  case 25:
+    return detail::decodeFlatStoreByteD16HiFlat(opcode, emit_error);
+  case 26:
+    return detail::decodeFlatStoreShortFlat(opcode, emit_error);
+  case 27:
+    return detail::decodeFlatStoreShortD16HiFlat(opcode, emit_error);
+  case 28:
+    return detail::decodeFlatStoreDwordFlat(opcode, emit_error);
+  case 29:
+    return detail::decodeFlatStoreDwordx2Flat(opcode, emit_error);
+  case 30:
+    return detail::decodeFlatStoreDwordx4Flat(opcode, emit_error);
+  case 31:
+    return detail::decodeFlatStoreDwordx3Flat(opcode, emit_error);
+  case 32:
+    return detail::decodeFlatLoadUbyteD16Flat(opcode, emit_error);
+  case 33:
+    return detail::decodeFlatLoadUbyteD16HiFlat(opcode, emit_error);
+  case 34:
+    return detail::decodeFlatLoadSbyteD16Flat(opcode, emit_error);
+  case 35:
+    return detail::decodeFlatLoadSbyteD16HiFlat(opcode, emit_error);
+  case 36:
+    return detail::decodeFlatLoadShortD16Flat(opcode, emit_error);
+  case 37:
+    return detail::decodeFlatLoadShortD16HiFlat(opcode, emit_error);
+  case 48:
+    return detail::decodeFlatAtomicSwapFlat(opcode, emit_error);
+  case 49:
+    return detail::decodeFlatAtomicCmpswapFlat(opcode, emit_error);
+  case 50:
+    return detail::decodeFlatAtomicAddFlat(opcode, emit_error);
+  case 51:
+    return detail::decodeFlatAtomicSubFlat(opcode, emit_error);
+  case 52:
+    return detail::decodeGlobalAtomicCsubFlat(opcode, emit_error);
+  case 53:
+    return detail::decodeFlatAtomicSminFlat(opcode, emit_error);
+  case 54:
+    return detail::decodeFlatAtomicUminFlat(opcode, emit_error);
+  case 55:
+    return detail::decodeFlatAtomicSmaxFlat(opcode, emit_error);
+  case 56:
+    return detail::decodeFlatAtomicUmaxFlat(opcode, emit_error);
+  case 57:
+    return detail::decodeFlatAtomicAndFlat(opcode, emit_error);
+  case 58:
+    return detail::decodeFlatAtomicOrFlat(opcode, emit_error);
+  case 59:
+    return detail::decodeFlatAtomicXorFlat(opcode, emit_error);
+  case 60:
+    return detail::decodeFlatAtomicIncFlat(opcode, emit_error);
+  case 61:
+    return detail::decodeFlatAtomicDecFlat(opcode, emit_error);
+  case 62:
+    return detail::decodeFlatAtomicFcmpswapFlat(opcode, emit_error);
+  case 63:
+    return detail::decodeFlatAtomicFminFlat(opcode, emit_error);
+  case 64:
+    return detail::decodeFlatAtomicFmaxFlat(opcode, emit_error);
+  case 80:
+    return detail::decodeFlatAtomicSwapX2Flat(opcode, emit_error);
+  case 81:
+    return detail::decodeFlatAtomicCmpswapX2Flat(opcode, emit_error);
+  case 82:
+    return detail::decodeFlatAtomicAddX2Flat(opcode, emit_error);
+  case 83:
+    return detail::decodeFlatAtomicSubX2Flat(opcode, emit_error);
+  case 85:
+    return detail::decodeFlatAtomicSminX2Flat(opcode, emit_error);
+  case 86:
+    return detail::decodeFlatAtomicUminX2Flat(opcode, emit_error);
+  case 87:
+    return detail::decodeFlatAtomicSmaxX2Flat(opcode, emit_error);
+  case 88:
+    return detail::decodeFlatAtomicUmaxX2Flat(opcode, emit_error);
+  case 89:
+    return detail::decodeFlatAtomicAndX2Flat(opcode, emit_error);
+  case 90:
+    return detail::decodeFlatAtomicOrX2Flat(opcode, emit_error);
+  case 91:
+    return detail::decodeFlatAtomicXorX2Flat(opcode, emit_error);
+  case 92:
+    return detail::decodeFlatAtomicIncX2Flat(opcode, emit_error);
+  case 93:
+    return detail::decodeFlatAtomicDecX2Flat(opcode, emit_error);
+  case 94:
+    return detail::decodeFlatAtomicFcmpswapX2Flat(opcode, emit_error);
+  case 95:
+    return detail::decodeFlatAtomicFminX2Flat(opcode, emit_error);
+  case 96:
+    return detail::decodeFlatAtomicFmaxX2Flat(opcode, emit_error);
+  default:
+    return DecoderImpl::decodeInvalid(opcode, emit_error);
+  }
+#endif
 }
 
 DecodeResult DecoderImpl::subDecodeMubuf(const MachineInst *opcode,
                                          const DecodeErrorEmitter &emit_error) {
   Mubuf::OpEncoding op = *reinterpret_cast<const decltype(op) *>(opcode);
+#if RJ_HOST_HAS_X86_64_ELF_REL32
   return sub_decode_mubuf[op.op | (op.opm << 7)](opcode, emit_error);
+#else
+  switch (static_cast<unsigned>(op.op | (op.opm << 7))) {
+  case 0:
+    return detail::decodeBufferLoadFormatXMubuf(opcode, emit_error);
+  case 1:
+    return detail::decodeBufferLoadFormatXyMubuf(opcode, emit_error);
+  case 2:
+    return detail::decodeBufferLoadFormatXyzMubuf(opcode, emit_error);
+  case 3:
+    return detail::decodeBufferLoadFormatXyzwMubuf(opcode, emit_error);
+  case 4:
+    return detail::decodeBufferStoreFormatXMubuf(opcode, emit_error);
+  case 5:
+    return detail::decodeBufferStoreFormatXyMubuf(opcode, emit_error);
+  case 6:
+    return detail::decodeBufferStoreFormatXyzMubuf(opcode, emit_error);
+  case 7:
+    return detail::decodeBufferStoreFormatXyzwMubuf(opcode, emit_error);
+  case 8:
+    return detail::decodeBufferLoadUbyteMubuf(opcode, emit_error);
+  case 9:
+    return detail::decodeBufferLoadSbyteMubuf(opcode, emit_error);
+  case 10:
+    return detail::decodeBufferLoadUshortMubuf(opcode, emit_error);
+  case 11:
+    return detail::decodeBufferLoadSshortMubuf(opcode, emit_error);
+  case 12:
+    return detail::decodeBufferLoadDwordMubuf(opcode, emit_error);
+  case 13:
+    return detail::decodeBufferLoadDwordx2Mubuf(opcode, emit_error);
+  case 14:
+    return detail::decodeBufferLoadDwordx4Mubuf(opcode, emit_error);
+  case 15:
+    return detail::decodeBufferLoadDwordx3Mubuf(opcode, emit_error);
+  case 24:
+    return detail::decodeBufferStoreByteMubuf(opcode, emit_error);
+  case 25:
+    return detail::decodeBufferStoreByteD16HiMubuf(opcode, emit_error);
+  case 26:
+    return detail::decodeBufferStoreShortMubuf(opcode, emit_error);
+  case 27:
+    return detail::decodeBufferStoreShortD16HiMubuf(opcode, emit_error);
+  case 28:
+    return detail::decodeBufferStoreDwordMubuf(opcode, emit_error);
+  case 29:
+    return detail::decodeBufferStoreDwordx2Mubuf(opcode, emit_error);
+  case 30:
+    return detail::decodeBufferStoreDwordx4Mubuf(opcode, emit_error);
+  case 31:
+    return detail::decodeBufferStoreDwordx3Mubuf(opcode, emit_error);
+  case 32:
+    return detail::decodeBufferLoadUbyteD16Mubuf(opcode, emit_error);
+  case 33:
+    return detail::decodeBufferLoadUbyteD16HiMubuf(opcode, emit_error);
+  case 34:
+    return detail::decodeBufferLoadSbyteD16Mubuf(opcode, emit_error);
+  case 35:
+    return detail::decodeBufferLoadSbyteD16HiMubuf(opcode, emit_error);
+  case 36:
+    return detail::decodeBufferLoadShortD16Mubuf(opcode, emit_error);
+  case 37:
+    return detail::decodeBufferLoadShortD16HiMubuf(opcode, emit_error);
+  case 38:
+    return detail::decodeBufferLoadFormatD16HiXMubuf(opcode, emit_error);
+  case 39:
+    return detail::decodeBufferStoreFormatD16HiXMubuf(opcode, emit_error);
+  case 48:
+    return detail::decodeBufferAtomicSwapMubuf(opcode, emit_error);
+  case 49:
+    return detail::decodeBufferAtomicCmpswapMubuf(opcode, emit_error);
+  case 50:
+    return detail::decodeBufferAtomicAddMubuf(opcode, emit_error);
+  case 51:
+    return detail::decodeBufferAtomicSubMubuf(opcode, emit_error);
+  case 52:
+    return detail::decodeBufferAtomicCsubMubuf(opcode, emit_error);
+  case 53:
+    return detail::decodeBufferAtomicSminMubuf(opcode, emit_error);
+  case 54:
+    return detail::decodeBufferAtomicUminMubuf(opcode, emit_error);
+  case 55:
+    return detail::decodeBufferAtomicSmaxMubuf(opcode, emit_error);
+  case 56:
+    return detail::decodeBufferAtomicUmaxMubuf(opcode, emit_error);
+  case 57:
+    return detail::decodeBufferAtomicAndMubuf(opcode, emit_error);
+  case 58:
+    return detail::decodeBufferAtomicOrMubuf(opcode, emit_error);
+  case 59:
+    return detail::decodeBufferAtomicXorMubuf(opcode, emit_error);
+  case 60:
+    return detail::decodeBufferAtomicIncMubuf(opcode, emit_error);
+  case 61:
+    return detail::decodeBufferAtomicDecMubuf(opcode, emit_error);
+  case 62:
+    return detail::decodeBufferAtomicFcmpswapMubuf(opcode, emit_error);
+  case 63:
+    return detail::decodeBufferAtomicFminMubuf(opcode, emit_error);
+  case 64:
+    return detail::decodeBufferAtomicFmaxMubuf(opcode, emit_error);
+  case 80:
+    return detail::decodeBufferAtomicSwapX2Mubuf(opcode, emit_error);
+  case 81:
+    return detail::decodeBufferAtomicCmpswapX2Mubuf(opcode, emit_error);
+  case 82:
+    return detail::decodeBufferAtomicAddX2Mubuf(opcode, emit_error);
+  case 83:
+    return detail::decodeBufferAtomicSubX2Mubuf(opcode, emit_error);
+  case 85:
+    return detail::decodeBufferAtomicSminX2Mubuf(opcode, emit_error);
+  case 86:
+    return detail::decodeBufferAtomicUminX2Mubuf(opcode, emit_error);
+  case 87:
+    return detail::decodeBufferAtomicSmaxX2Mubuf(opcode, emit_error);
+  case 88:
+    return detail::decodeBufferAtomicUmaxX2Mubuf(opcode, emit_error);
+  case 89:
+    return detail::decodeBufferAtomicAndX2Mubuf(opcode, emit_error);
+  case 90:
+    return detail::decodeBufferAtomicOrX2Mubuf(opcode, emit_error);
+  case 91:
+    return detail::decodeBufferAtomicXorX2Mubuf(opcode, emit_error);
+  case 92:
+    return detail::decodeBufferAtomicIncX2Mubuf(opcode, emit_error);
+  case 93:
+    return detail::decodeBufferAtomicDecX2Mubuf(opcode, emit_error);
+  case 94:
+    return detail::decodeBufferAtomicFcmpswapX2Mubuf(opcode, emit_error);
+  case 95:
+    return detail::decodeBufferAtomicFminX2Mubuf(opcode, emit_error);
+  case 96:
+    return detail::decodeBufferAtomicFmaxX2Mubuf(opcode, emit_error);
+  case 113:
+    return detail::decodeBufferGl0InvMubuf(opcode, emit_error);
+  case 114:
+    return detail::decodeBufferGl1InvMubuf(opcode, emit_error);
+  case 128:
+    return detail::decodeBufferLoadFormatD16XMubuf(opcode, emit_error);
+  case 129:
+    return detail::decodeBufferLoadFormatD16XyMubuf(opcode, emit_error);
+  case 130:
+    return detail::decodeBufferLoadFormatD16XyzMubuf(opcode, emit_error);
+  case 131:
+    return detail::decodeBufferLoadFormatD16XyzwMubuf(opcode, emit_error);
+  case 132:
+    return detail::decodeBufferStoreFormatD16XMubuf(opcode, emit_error);
+  case 133:
+    return detail::decodeBufferStoreFormatD16XyMubuf(opcode, emit_error);
+  case 134:
+    return detail::decodeBufferStoreFormatD16XyzMubuf(opcode, emit_error);
+  case 135:
+    return detail::decodeBufferStoreFormatD16XyzwMubuf(opcode, emit_error);
+  default:
+    return DecoderImpl::decodeInvalid(opcode, emit_error);
+  }
+#endif
 }
 
 DecodeResult DecoderImpl::subDecodeMtbuf(const MachineInst *opcode,
                                          const DecodeErrorEmitter &emit_error) {
   Mtbuf::OpEncoding op = *reinterpret_cast<const decltype(op) *>(opcode);
+#if RJ_HOST_HAS_X86_64_ELF_REL32
   return sub_decode_mtbuf[op.op | (op.opm << 3)](opcode, emit_error);
+#else
+  switch (static_cast<unsigned>(op.op | (op.opm << 3))) {
+  case 1:
+    return detail::decodeTbufferLoadFormatXyMtbuf(opcode, emit_error);
+  case 2:
+    return detail::decodeTbufferLoadFormatXyzMtbuf(opcode, emit_error);
+  case 3:
+    return detail::decodeTbufferLoadFormatXyzwMtbuf(opcode, emit_error);
+  case 4:
+    return detail::decodeTbufferStoreFormatXMtbuf(opcode, emit_error);
+  case 5:
+    return detail::decodeTbufferStoreFormatXyMtbuf(opcode, emit_error);
+  case 6:
+    return detail::decodeTbufferStoreFormatXyzMtbuf(opcode, emit_error);
+  case 7:
+    return detail::decodeTbufferStoreFormatXyzwMtbuf(opcode, emit_error);
+  case 8:
+    return detail::decodeTbufferLoadFormatD16XMtbuf(opcode, emit_error);
+  case 9:
+    return detail::decodeTbufferLoadFormatD16XyMtbuf(opcode, emit_error);
+  case 10:
+    return detail::decodeTbufferLoadFormatD16XyzMtbuf(opcode, emit_error);
+  case 11:
+    return detail::decodeTbufferLoadFormatD16XyzwMtbuf(opcode, emit_error);
+  case 12:
+    return detail::decodeTbufferStoreFormatD16XMtbuf(opcode, emit_error);
+  case 13:
+    return detail::decodeTbufferStoreFormatD16XyMtbuf(opcode, emit_error);
+  case 14:
+    return detail::decodeTbufferStoreFormatD16XyzMtbuf(opcode, emit_error);
+  case 15:
+    return detail::decodeTbufferStoreFormatD16XyzwMtbuf(opcode, emit_error);
+  default:
+    return detail::decodeTbufferLoadFormatXMtbuf(opcode, emit_error);
+  }
+#endif
 }
 
 DecodeResult DecoderImpl::subDecodeMimg(const MachineInst *opcode,
                                         const DecodeErrorEmitter &emit_error) {
   Mimg::OpEncoding op = *reinterpret_cast<const decltype(op) *>(opcode);
+#if RJ_HOST_HAS_X86_64_ELF_REL32
   return sub_decode_mimg[op.op](opcode, emit_error);
+#else
+  switch (static_cast<unsigned>(op.op)) {
+  case 0:
+    return detail::decodeImageLoadMimg(opcode, emit_error);
+  case 1:
+    return detail::decodeImageLoadMipMimg(opcode, emit_error);
+  case 2:
+    return detail::decodeImageLoadPckMimg(opcode, emit_error);
+  case 3:
+    return detail::decodeImageLoadPckSgnMimg(opcode, emit_error);
+  case 4:
+    return detail::decodeImageLoadMipPckMimg(opcode, emit_error);
+  case 5:
+    return detail::decodeImageLoadMipPckSgnMimg(opcode, emit_error);
+  case 8:
+    return detail::decodeImageStoreMimg(opcode, emit_error);
+  case 9:
+    return detail::decodeImageStoreMipMimg(opcode, emit_error);
+  case 10:
+    return detail::decodeImageStorePckMimg(opcode, emit_error);
+  case 11:
+    return detail::decodeImageStoreMipPckMimg(opcode, emit_error);
+  case 14:
+    return detail::decodeImageGetResinfoMimg(opcode, emit_error);
+  case 15:
+    return detail::decodeImageAtomicSwapMimg(opcode, emit_error);
+  case 16:
+    return detail::decodeImageAtomicCmpswapMimg(opcode, emit_error);
+  case 17:
+    return detail::decodeImageAtomicAddMimg(opcode, emit_error);
+  case 18:
+    return detail::decodeImageAtomicSubMimg(opcode, emit_error);
+  case 20:
+    return detail::decodeImageAtomicSminMimg(opcode, emit_error);
+  case 21:
+    return detail::decodeImageAtomicUminMimg(opcode, emit_error);
+  case 22:
+    return detail::decodeImageAtomicSmaxMimg(opcode, emit_error);
+  case 23:
+    return detail::decodeImageAtomicUmaxMimg(opcode, emit_error);
+  case 24:
+    return detail::decodeImageAtomicAndMimg(opcode, emit_error);
+  case 25:
+    return detail::decodeImageAtomicOrMimg(opcode, emit_error);
+  case 26:
+    return detail::decodeImageAtomicXorMimg(opcode, emit_error);
+  case 27:
+    return detail::decodeImageAtomicIncMimg(opcode, emit_error);
+  case 28:
+    return detail::decodeImageAtomicDecMimg(opcode, emit_error);
+  case 29:
+    return detail::decodeImageAtomicFcmpswapMimg(opcode, emit_error);
+  case 30:
+    return detail::decodeImageAtomicFminMimg(opcode, emit_error);
+  case 31:
+    return detail::decodeImageAtomicFmaxMimg(opcode, emit_error);
+  case 32:
+    return detail::decodeImageSampleMimg(opcode, emit_error);
+  case 33:
+    return detail::decodeImageSampleClMimg(opcode, emit_error);
+  case 34:
+    return detail::decodeImageSampleDMimg(opcode, emit_error);
+  case 35:
+    return detail::decodeImageSampleDClMimg(opcode, emit_error);
+  case 36:
+    return detail::decodeImageSampleLMimg(opcode, emit_error);
+  case 37:
+    return detail::decodeImageSampleBMimg(opcode, emit_error);
+  case 38:
+    return detail::decodeImageSampleBClMimg(opcode, emit_error);
+  case 39:
+    return detail::decodeImageSampleLzMimg(opcode, emit_error);
+  case 40:
+    return detail::decodeImageSampleCMimg(opcode, emit_error);
+  case 41:
+    return detail::decodeImageSampleCClMimg(opcode, emit_error);
+  case 42:
+    return detail::decodeImageSampleCDMimg(opcode, emit_error);
+  case 43:
+    return detail::decodeImageSampleCDClMimg(opcode, emit_error);
+  case 44:
+    return detail::decodeImageSampleCLMimg(opcode, emit_error);
+  case 45:
+    return detail::decodeImageSampleCBMimg(opcode, emit_error);
+  case 46:
+    return detail::decodeImageSampleCBClMimg(opcode, emit_error);
+  case 47:
+    return detail::decodeImageSampleCLzMimg(opcode, emit_error);
+  case 48:
+    return detail::decodeImageSampleOMimg(opcode, emit_error);
+  case 49:
+    return detail::decodeImageSampleClOMimg(opcode, emit_error);
+  case 50:
+    return detail::decodeImageSampleDOMimg(opcode, emit_error);
+  case 51:
+    return detail::decodeImageSampleDClOMimg(opcode, emit_error);
+  case 52:
+    return detail::decodeImageSampleLOMimg(opcode, emit_error);
+  case 53:
+    return detail::decodeImageSampleBOMimg(opcode, emit_error);
+  case 54:
+    return detail::decodeImageSampleBClOMimg(opcode, emit_error);
+  case 55:
+    return detail::decodeImageSampleLzOMimg(opcode, emit_error);
+  case 56:
+    return detail::decodeImageSampleCOMimg(opcode, emit_error);
+  case 57:
+    return detail::decodeImageSampleCClOMimg(opcode, emit_error);
+  case 58:
+    return detail::decodeImageSampleCDOMimg(opcode, emit_error);
+  case 59:
+    return detail::decodeImageSampleCDClOMimg(opcode, emit_error);
+  case 60:
+    return detail::decodeImageSampleCLOMimg(opcode, emit_error);
+  case 61:
+    return detail::decodeImageSampleCBOMimg(opcode, emit_error);
+  case 62:
+    return detail::decodeImageSampleCBClOMimg(opcode, emit_error);
+  case 63:
+    return detail::decodeImageSampleCLzOMimg(opcode, emit_error);
+  case 64:
+    return detail::decodeImageGather4Mimg(opcode, emit_error);
+  case 65:
+    return detail::decodeImageGather4ClMimg(opcode, emit_error);
+  case 66:
+    return detail::decodeImageLoadBy2Mimg(opcode, emit_error);
+  case 67:
+    return detail::decodeImageLoadBy4Mimg(opcode, emit_error);
+  case 68:
+    return detail::decodeImageGather4LMimg(opcode, emit_error);
+  case 69:
+    return detail::decodeImageGather4BMimg(opcode, emit_error);
+  case 70:
+    return detail::decodeImageGather4BClMimg(opcode, emit_error);
+  case 71:
+    return detail::decodeImageGather4LzMimg(opcode, emit_error);
+  case 72:
+    return detail::decodeImageGather4CMimg(opcode, emit_error);
+  case 73:
+    return detail::decodeImageGather4CClMimg(opcode, emit_error);
+  case 74:
+    return detail::decodeImageLoadMipBy2Mimg(opcode, emit_error);
+  case 75:
+    return detail::decodeImageLoadMipBy4Mimg(opcode, emit_error);
+  case 76:
+    return detail::decodeImageGather4CLMimg(opcode, emit_error);
+  case 77:
+    return detail::decodeImageGather4CBMimg(opcode, emit_error);
+  case 78:
+    return detail::decodeImageGather4CBClMimg(opcode, emit_error);
+  case 79:
+    return detail::decodeImageGather4CLzMimg(opcode, emit_error);
+  case 80:
+    return detail::decodeImageGather4OMimg(opcode, emit_error);
+  case 81:
+    return detail::decodeImageGather4ClOMimg(opcode, emit_error);
+  case 82:
+    return detail::decodeImageStoreBy2Mimg(opcode, emit_error);
+  case 83:
+    return detail::decodeImageStoreBy4Mimg(opcode, emit_error);
+  case 84:
+    return detail::decodeImageGather4LOMimg(opcode, emit_error);
+  case 85:
+    return detail::decodeImageGather4BOMimg(opcode, emit_error);
+  case 86:
+    return detail::decodeImageGather4BClOMimg(opcode, emit_error);
+  case 87:
+    return detail::decodeImageGather4LzOMimg(opcode, emit_error);
+  case 88:
+    return detail::decodeImageGather4COMimg(opcode, emit_error);
+  case 89:
+    return detail::decodeImageGather4CClOMimg(opcode, emit_error);
+  case 90:
+    return detail::decodeImageStoreMipBy2Mimg(opcode, emit_error);
+  case 91:
+    return detail::decodeImageStoreMipBy4Mimg(opcode, emit_error);
+  case 92:
+    return detail::decodeImageGather4CLOMimg(opcode, emit_error);
+  case 93:
+    return detail::decodeImageGather4CBOMimg(opcode, emit_error);
+  case 94:
+    return detail::decodeImageGather4CBClOMimg(opcode, emit_error);
+  case 95:
+    return detail::decodeImageGather4CLzOMimg(opcode, emit_error);
+  case 96:
+    return detail::decodeImageGetLodMimg(opcode, emit_error);
+  case 97:
+    return detail::decodeImageGather4hMimg(opcode, emit_error);
+  case 98:
+    return detail::decodeImageGather4hPckMimg(opcode, emit_error);
+  case 99:
+    return detail::decodeImageGather8hPckMimg(opcode, emit_error);
+  case 104:
+    return detail::decodeImageSampleCdMimg(opcode, emit_error);
+  case 105:
+    return detail::decodeImageSampleCdClMimg(opcode, emit_error);
+  case 106:
+    return detail::decodeImageSampleCCdMimg(opcode, emit_error);
+  case 107:
+    return detail::decodeImageSampleCCdClMimg(opcode, emit_error);
+  case 108:
+    return detail::decodeImageSampleCdOMimg(opcode, emit_error);
+  case 109:
+    return detail::decodeImageSampleCdClOMimg(opcode, emit_error);
+  case 110:
+    return detail::decodeImageSampleCCdOMimg(opcode, emit_error);
+  case 111:
+    return detail::decodeImageSampleCCdClOMimg(opcode, emit_error);
+  case 112:
+    return detail::decodeImageLoadPck2Mimg(opcode, emit_error);
+  case 113:
+    return detail::decodeImageLoadPck4Mimg(opcode, emit_error);
+  case 115:
+    return detail::decodeImageLoadMipPck2Mimg(opcode, emit_error);
+  case 116:
+    return detail::decodeImageLoadMipPck4Mimg(opcode, emit_error);
+  case 118:
+    return detail::decodeImageStorePck2Mimg(opcode, emit_error);
+  case 119:
+    return detail::decodeImageStorePck4Mimg(opcode, emit_error);
+  case 121:
+    return detail::decodeImageStoreMipPck2Mimg(opcode, emit_error);
+  case 122:
+    return detail::decodeImageStoreMipPck4Mimg(opcode, emit_error);
+  case 128:
+    return detail::decodeImageMsaaLoadMimg(opcode, emit_error);
+  case 162:
+    return detail::decodeImageSampleDG16Mimg(opcode, emit_error);
+  case 163:
+    return detail::decodeImageSampleDClG16Mimg(opcode, emit_error);
+  case 170:
+    return detail::decodeImageSampleCDG16Mimg(opcode, emit_error);
+  case 171:
+    return detail::decodeImageSampleCDClG16Mimg(opcode, emit_error);
+  case 178:
+    return detail::decodeImageSampleDOG16Mimg(opcode, emit_error);
+  case 179:
+    return detail::decodeImageSampleDClOG16Mimg(opcode, emit_error);
+  case 186:
+    return detail::decodeImageSampleCDOG16Mimg(opcode, emit_error);
+  case 187:
+    return detail::decodeImageSampleCDClOG16Mimg(opcode, emit_error);
+  case 230:
+    return detail::decodeImageBvhIntersectRayMimg(opcode, emit_error);
+  case 231:
+    return detail::decodeImageBvh64IntersectRayMimg(opcode, emit_error);
+  case 232:
+    return detail::decodeImageSampleCdG16Mimg(opcode, emit_error);
+  case 233:
+    return detail::decodeImageSampleCdClG16Mimg(opcode, emit_error);
+  case 234:
+    return detail::decodeImageSampleCCdG16Mimg(opcode, emit_error);
+  case 235:
+    return detail::decodeImageSampleCCdClG16Mimg(opcode, emit_error);
+  case 236:
+    return detail::decodeImageSampleCdOG16Mimg(opcode, emit_error);
+  case 237:
+    return detail::decodeImageSampleCdClOG16Mimg(opcode, emit_error);
+  case 238:
+    return detail::decodeImageSampleCCdOG16Mimg(opcode, emit_error);
+  case 239:
+    return detail::decodeImageSampleCCdClOG16Mimg(opcode, emit_error);
+  default:
+    return DecoderImpl::decodeInvalid(opcode, emit_error);
+  }
+#endif
 }
 
 DecodeResult DecoderImpl::subDecodeSmem(const MachineInst *opcode,
                                         const DecodeErrorEmitter &emit_error) {
   Smem::OpEncoding op = *reinterpret_cast<const decltype(op) *>(opcode);
+#if RJ_HOST_HAS_X86_64_ELF_REL32
   return sub_decode_smem[op.op](opcode, emit_error);
+#else
+  switch (static_cast<unsigned>(op.op)) {
+  case 0:
+    return detail::decodeSLoadDwordSmem(opcode, emit_error);
+  case 1:
+    return detail::decodeSLoadDwordx2Smem(opcode, emit_error);
+  case 2:
+    return detail::decodeSLoadDwordx4Smem(opcode, emit_error);
+  case 3:
+    return detail::decodeSLoadDwordx8Smem(opcode, emit_error);
+  case 4:
+    return detail::decodeSLoadDwordx16Smem(opcode, emit_error);
+  case 8:
+    return detail::decodeSBufferLoadDwordSmem(opcode, emit_error);
+  case 9:
+    return detail::decodeSBufferLoadDwordx2Smem(opcode, emit_error);
+  case 10:
+    return detail::decodeSBufferLoadDwordx4Smem(opcode, emit_error);
+  case 11:
+    return detail::decodeSBufferLoadDwordx8Smem(opcode, emit_error);
+  case 12:
+    return detail::decodeSBufferLoadDwordx16Smem(opcode, emit_error);
+  case 31:
+    return detail::decodeSGl1InvSmem(opcode, emit_error);
+  case 32:
+    return detail::decodeSDcacheInvSmem(opcode, emit_error);
+  case 36:
+    return detail::decodeSMemtimeSmem(opcode, emit_error);
+  case 37:
+    return detail::decodeSMemrealtimeSmem(opcode, emit_error);
+  default:
+    return DecoderImpl::decodeInvalid(opcode, emit_error);
+  }
+#endif
 }
 
-const std::array<DecoderImpl::DecodeFunc, 512> DecoderImpl::primary_decode_table = {
+#if RJ_HOST_HAS_X86_64_ELF_REL32
+void DecoderImpl::emitTables() {
 
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVCndmaskB32Vop2,
-    &detail::decodeVCndmaskB32Vop2,
-    &detail::decodeVCndmaskB32Vop2,
-    &detail::decodeVCndmaskB32Vop2,
-    &detail::decodeVDot2cF32F16Vop2,
-    &detail::decodeVDot2cF32F16Vop2,
-    &detail::decodeVDot2cF32F16Vop2,
-    &detail::decodeVDot2cF32F16Vop2,
-    &detail::decodeVAddF32Vop2,
-    &detail::decodeVAddF32Vop2,
-    &detail::decodeVAddF32Vop2,
-    &detail::decodeVAddF32Vop2,
-    &detail::decodeVSubF32Vop2,
-    &detail::decodeVSubF32Vop2,
-    &detail::decodeVSubF32Vop2,
-    &detail::decodeVSubF32Vop2,
-    &detail::decodeVSubrevF32Vop2,
-    &detail::decodeVSubrevF32Vop2,
-    &detail::decodeVSubrevF32Vop2,
-    &detail::decodeVSubrevF32Vop2,
-    &detail::decodeVFmacLegacyF32Vop2,
-    &detail::decodeVFmacLegacyF32Vop2,
-    &detail::decodeVFmacLegacyF32Vop2,
-    &detail::decodeVFmacLegacyF32Vop2,
-    &detail::decodeVMulLegacyF32Vop2,
-    &detail::decodeVMulLegacyF32Vop2,
-    &detail::decodeVMulLegacyF32Vop2,
-    &detail::decodeVMulLegacyF32Vop2,
-    &detail::decodeVMulF32Vop2,
-    &detail::decodeVMulF32Vop2,
-    &detail::decodeVMulF32Vop2,
-    &detail::decodeVMulF32Vop2,
-    &detail::decodeVMulI32I24Vop2,
-    &detail::decodeVMulI32I24Vop2,
-    &detail::decodeVMulI32I24Vop2,
-    &detail::decodeVMulI32I24Vop2,
-    &detail::decodeVMulHiI32I24Vop2,
-    &detail::decodeVMulHiI32I24Vop2,
-    &detail::decodeVMulHiI32I24Vop2,
-    &detail::decodeVMulHiI32I24Vop2,
-    &detail::decodeVMulU32U24Vop2,
-    &detail::decodeVMulU32U24Vop2,
-    &detail::decodeVMulU32U24Vop2,
-    &detail::decodeVMulU32U24Vop2,
-    &detail::decodeVMulHiU32U24Vop2,
-    &detail::decodeVMulHiU32U24Vop2,
-    &detail::decodeVMulHiU32U24Vop2,
-    &detail::decodeVMulHiU32U24Vop2,
-    &detail::decodeVDot4cI32I8Vop2,
-    &detail::decodeVDot4cI32I8Vop2,
-    &detail::decodeVDot4cI32I8Vop2,
-    &detail::decodeVDot4cI32I8Vop2,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVMinF32Vop2,
-    &detail::decodeVMinF32Vop2,
-    &detail::decodeVMinF32Vop2,
-    &detail::decodeVMinF32Vop2,
-    &detail::decodeVMaxF32Vop2,
-    &detail::decodeVMaxF32Vop2,
-    &detail::decodeVMaxF32Vop2,
-    &detail::decodeVMaxF32Vop2,
-    &detail::decodeVMinI32Vop2,
-    &detail::decodeVMinI32Vop2,
-    &detail::decodeVMinI32Vop2,
-    &detail::decodeVMinI32Vop2,
-    &detail::decodeVMaxI32Vop2,
-    &detail::decodeVMaxI32Vop2,
-    &detail::decodeVMaxI32Vop2,
-    &detail::decodeVMaxI32Vop2,
-    &detail::decodeVMinU32Vop2,
-    &detail::decodeVMinU32Vop2,
-    &detail::decodeVMinU32Vop2,
-    &detail::decodeVMinU32Vop2,
-    &detail::decodeVMaxU32Vop2,
-    &detail::decodeVMaxU32Vop2,
-    &detail::decodeVMaxU32Vop2,
-    &detail::decodeVMaxU32Vop2,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVLshrrevB32Vop2,
-    &detail::decodeVLshrrevB32Vop2,
-    &detail::decodeVLshrrevB32Vop2,
-    &detail::decodeVLshrrevB32Vop2,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVAshrrevI32Vop2,
-    &detail::decodeVAshrrevI32Vop2,
-    &detail::decodeVAshrrevI32Vop2,
-    &detail::decodeVAshrrevI32Vop2,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVLshlrevB32Vop2,
-    &detail::decodeVLshlrevB32Vop2,
-    &detail::decodeVLshlrevB32Vop2,
-    &detail::decodeVLshlrevB32Vop2,
-    &detail::decodeVAndB32Vop2,
-    &detail::decodeVAndB32Vop2,
-    &detail::decodeVAndB32Vop2,
-    &detail::decodeVAndB32Vop2,
-    &detail::decodeVOrB32Vop2,
-    &detail::decodeVOrB32Vop2,
-    &detail::decodeVOrB32Vop2,
-    &detail::decodeVOrB32Vop2,
-    &detail::decodeVXorB32Vop2,
-    &detail::decodeVXorB32Vop2,
-    &detail::decodeVXorB32Vop2,
-    &detail::decodeVXorB32Vop2,
-    &detail::decodeVXnorB32Vop2,
-    &detail::decodeVXnorB32Vop2,
-    &detail::decodeVXnorB32Vop2,
-    &detail::decodeVXnorB32Vop2,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVAddNcU32Vop2,
-    &detail::decodeVAddNcU32Vop2,
-    &detail::decodeVAddNcU32Vop2,
-    &detail::decodeVAddNcU32Vop2,
-    &detail::decodeVSubNcU32Vop2,
-    &detail::decodeVSubNcU32Vop2,
-    &detail::decodeVSubNcU32Vop2,
-    &detail::decodeVSubNcU32Vop2,
-    &detail::decodeVSubrevNcU32Vop2,
-    &detail::decodeVSubrevNcU32Vop2,
-    &detail::decodeVSubrevNcU32Vop2,
-    &detail::decodeVSubrevNcU32Vop2,
-    &detail::decodeVAddCoCiU32Vop2,
-    &detail::decodeVAddCoCiU32Vop2,
-    &detail::decodeVAddCoCiU32Vop2,
-    &detail::decodeVAddCoCiU32Vop2,
-    &detail::decodeVSubCoCiU32Vop2,
-    &detail::decodeVSubCoCiU32Vop2,
-    &detail::decodeVSubCoCiU32Vop2,
-    &detail::decodeVSubCoCiU32Vop2,
-    &detail::decodeVSubrevCoCiU32Vop2,
-    &detail::decodeVSubrevCoCiU32Vop2,
-    &detail::decodeVSubrevCoCiU32Vop2,
-    &detail::decodeVSubrevCoCiU32Vop2,
-    &detail::decodeVFmacF32Vop2,
-    &detail::decodeVFmacF32Vop2,
-    &detail::decodeVFmacF32Vop2,
-    &detail::decodeVFmacF32Vop2,
-    &detail::decodeVFmamkF32Vop2,
-    &detail::decodeVFmamkF32Vop2,
-    &detail::decodeVFmamkF32Vop2,
-    &detail::decodeVFmamkF32Vop2,
-    &detail::decodeVFmaakF32Vop2,
-    &detail::decodeVFmaakF32Vop2,
-    &detail::decodeVFmaakF32Vop2,
-    &detail::decodeVFmaakF32Vop2,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVCvtPkrtzF16F32Vop2,
-    &detail::decodeVCvtPkrtzF16F32Vop2,
-    &detail::decodeVCvtPkrtzF16F32Vop2,
-    &detail::decodeVCvtPkrtzF16F32Vop2,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVAddF16Vop2,
-    &detail::decodeVAddF16Vop2,
-    &detail::decodeVAddF16Vop2,
-    &detail::decodeVAddF16Vop2,
-    &detail::decodeVSubF16Vop2,
-    &detail::decodeVSubF16Vop2,
-    &detail::decodeVSubF16Vop2,
-    &detail::decodeVSubF16Vop2,
-    &detail::decodeVSubrevF16Vop2,
-    &detail::decodeVSubrevF16Vop2,
-    &detail::decodeVSubrevF16Vop2,
-    &detail::decodeVSubrevF16Vop2,
-    &detail::decodeVMulF16Vop2,
-    &detail::decodeVMulF16Vop2,
-    &detail::decodeVMulF16Vop2,
-    &detail::decodeVMulF16Vop2,
-    &detail::decodeVFmacF16Vop2,
-    &detail::decodeVFmacF16Vop2,
-    &detail::decodeVFmacF16Vop2,
-    &detail::decodeVFmacF16Vop2,
-    &detail::decodeVFmamkF16Vop2,
-    &detail::decodeVFmamkF16Vop2,
-    &detail::decodeVFmamkF16Vop2,
-    &detail::decodeVFmamkF16Vop2,
-    &detail::decodeVFmaakF16Vop2,
-    &detail::decodeVFmaakF16Vop2,
-    &detail::decodeVFmaakF16Vop2,
-    &detail::decodeVFmaakF16Vop2,
-    &detail::decodeVMaxF16Vop2,
-    &detail::decodeVMaxF16Vop2,
-    &detail::decodeVMaxF16Vop2,
-    &detail::decodeVMaxF16Vop2,
-    &detail::decodeVMinF16Vop2,
-    &detail::decodeVMinF16Vop2,
-    &detail::decodeVMinF16Vop2,
-    &detail::decodeVMinF16Vop2,
-    &detail::decodeVLdexpF16Vop2,
-    &detail::decodeVLdexpF16Vop2,
-    &detail::decodeVLdexpF16Vop2,
-    &detail::decodeVLdexpF16Vop2,
-    &detail::decodeVPkFmacF16Vop2,
-    &detail::decodeVPkFmacF16Vop2,
-    &detail::decodeVPkFmacF16Vop2,
-    &detail::decodeVPkFmacF16Vop2,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::subDecodeVopc,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::subDecodeVopc,
-    &DecoderImpl::subDecodeVopc,
-    &DecoderImpl::subDecodeVop1,
-    &DecoderImpl::subDecodeVop1,
-    &DecoderImpl::subDecodeVop1,
-    &DecoderImpl::subDecodeVop1,
-    &detail::decodeSAddU32Sop2,
-    &detail::decodeSSubU32Sop2,
-    &detail::decodeSAddI32Sop2,
-    &detail::decodeSSubI32Sop2,
-    &detail::decodeSAddcU32Sop2,
-    &detail::decodeSSubbU32Sop2,
-    &detail::decodeSMinI32Sop2,
-    &detail::decodeSMinU32Sop2,
-    &detail::decodeSMaxI32Sop2,
-    &detail::decodeSMaxU32Sop2,
-    &detail::decodeSCselectB32Sop2,
-    &detail::decodeSCselectB64Sop2,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeSAndB32Sop2,
-    &detail::decodeSAndB64Sop2,
-    &detail::decodeSOrB32Sop2,
-    &detail::decodeSOrB64Sop2,
-    &detail::decodeSXorB32Sop2,
-    &detail::decodeSXorB64Sop2,
-    &detail::decodeSAndn2B32Sop2,
-    &detail::decodeSAndn2B64Sop2,
-    &detail::decodeSOrn2B32Sop2,
-    &detail::decodeSOrn2B64Sop2,
-    &detail::decodeSNandB32Sop2,
-    &detail::decodeSNandB64Sop2,
-    &detail::decodeSNorB32Sop2,
-    &detail::decodeSNorB64Sop2,
-    &detail::decodeSXnorB32Sop2,
-    &detail::decodeSXnorB64Sop2,
-    &detail::decodeSLshlB32Sop2,
-    &detail::decodeSLshlB64Sop2,
-    &detail::decodeSLshrB32Sop2,
-    &detail::decodeSLshrB64Sop2,
-    &detail::decodeSAshrI32Sop2,
-    &detail::decodeSAshrI64Sop2,
-    &detail::decodeSBfmB32Sop2,
-    &detail::decodeSBfmB64Sop2,
-    &detail::decodeSMulI32Sop2,
-    &detail::decodeSBfeU32Sop2,
-    &detail::decodeSBfeI32Sop2,
-    &detail::decodeSBfeU64Sop2,
-    &detail::decodeSBfeI64Sop2,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeSAbsdiffI32Sop2,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeSLshl1AddU32Sop2,
-    &detail::decodeSLshl2AddU32Sop2,
-    &detail::decodeSLshl3AddU32Sop2,
-    &detail::decodeSLshl4AddU32Sop2,
-    &detail::decodeSPackLlB32B16Sop2,
-    &detail::decodeSPackLhB32B16Sop2,
-    &detail::decodeSPackHhB32B16Sop2,
-    &detail::decodeSMulHiU32Sop2,
-    &detail::decodeSMulHiI32Sop2,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeSMovkI32Sopk,
-    &detail::decodeSVersionSopk,
-    &detail::decodeSCmovkI32Sopk,
-    &detail::decodeSCmpkEqI32Sopk,
-    &detail::decodeSCmpkLgI32Sopk,
-    &detail::decodeSCmpkGtI32Sopk,
-    &detail::decodeSCmpkGeI32Sopk,
-    &detail::decodeSCmpkLtI32Sopk,
-    &detail::decodeSCmpkLeI32Sopk,
-    &detail::decodeSCmpkEqU32Sopk,
-    &detail::decodeSCmpkLgU32Sopk,
-    &detail::decodeSCmpkGtU32Sopk,
-    &detail::decodeSCmpkGeU32Sopk,
-    &detail::decodeSCmpkLtU32Sopk,
-    &detail::decodeSCmpkLeU32Sopk,
-    &detail::decodeSAddkI32Sopk,
-    &detail::decodeSMulkI32Sopk,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeSGetregB32Sopk,
-    &detail::decodeSSetregB32Sopk,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeSSetregImm32B32Sopk,
-    &detail::decodeSCallB64Sopk,
-    &detail::decodeSWaitcntVscntSopk,
-    &detail::decodeSWaitcntVmcntSopk,
-    &detail::decodeSWaitcntExpcntSopk,
-    &detail::decodeSWaitcntLgkmcntSopk,
-    &detail::decodeSSubvectorLoopBeginSopk,
-    &detail::decodeSSubvectorLoopEndSopk,
-    &DecoderImpl::subDecodeSop1,
-    &DecoderImpl::subDecodeSopc,
-    &DecoderImpl::subDecodeSopp,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::subDecodeVintrp,
-    &DecoderImpl::subDecodeVintrp,
-    &DecoderImpl::subDecodeVintrp,
-    &DecoderImpl::subDecodeVintrp,
-    &DecoderImpl::subDecodeVintrp,
-    &DecoderImpl::subDecodeVintrp,
-    &DecoderImpl::subDecodeVintrp,
-    &DecoderImpl::subDecodeVintrp,
-    &DecoderImpl::subDecodeVop3p,
-    &DecoderImpl::subDecodeVop3p,
-    &DecoderImpl::subDecodeVop3p,
-    &DecoderImpl::subDecodeVop3p,
-    &DecoderImpl::subDecodeVop3p,
-    &DecoderImpl::subDecodeVop3p,
-    &DecoderImpl::subDecodeVop3p,
-    &DecoderImpl::subDecodeVop3p,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::subDecodeVop3,
-    &DecoderImpl::subDecodeVop3,
-    &DecoderImpl::subDecodeVop3,
-    &DecoderImpl::subDecodeVop3,
-    &DecoderImpl::subDecodeVop3,
-    &DecoderImpl::subDecodeVop3,
-    &DecoderImpl::subDecodeVop3,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::subDecodeDs,
-    &DecoderImpl::subDecodeDs,
-    &DecoderImpl::subDecodeDs,
-    &DecoderImpl::subDecodeDs,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::subDecodeDs,
-    &DecoderImpl::subDecodeDs,
-    &DecoderImpl::subDecodeDs,
-    &DecoderImpl::subDecodeFlat,
-    &DecoderImpl::subDecodeFlat,
-    &DecoderImpl::subDecodeFlat,
-    &DecoderImpl::subDecodeFlat,
-    &DecoderImpl::subDecodeFlat,
-    &DecoderImpl::subDecodeFlat,
-    &DecoderImpl::subDecodeFlat,
-    &DecoderImpl::subDecodeFlat,
-    &DecoderImpl::subDecodeMubuf,
-    &DecoderImpl::subDecodeMubuf,
-    &DecoderImpl::subDecodeMubuf,
-    &DecoderImpl::subDecodeMubuf,
-    &DecoderImpl::subDecodeMubuf,
-    &DecoderImpl::subDecodeMubuf,
-    &DecoderImpl::subDecodeMubuf,
-    &DecoderImpl::subDecodeMubuf,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::subDecodeMtbuf,
-    &DecoderImpl::subDecodeMtbuf,
-    &DecoderImpl::subDecodeMtbuf,
-    &DecoderImpl::subDecodeMtbuf,
-    &DecoderImpl::subDecodeMtbuf,
-    &DecoderImpl::subDecodeMtbuf,
-    &DecoderImpl::subDecodeMtbuf,
-    &DecoderImpl::subDecodeMtbuf,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::subDecodeMimg,
-    &DecoderImpl::subDecodeMimg,
-    &DecoderImpl::subDecodeMimg,
-    &DecoderImpl::subDecodeMimg,
-    &DecoderImpl::subDecodeMimg,
-    &DecoderImpl::subDecodeMimg,
-    &DecoderImpl::subDecodeMimg,
-    &DecoderImpl::subDecodeMimg,
-    &DecoderImpl::subDecodeSmem,
-    &DecoderImpl::subDecodeSmem,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeExpExp,
-    &detail::decodeExpExp,
-    &detail::decodeExpExp,
-    &detail::decodeExpExp,
-    &detail::decodeExpExp,
-    &detail::decodeExpExp,
-    &detail::decodeExpExp,
-    &detail::decodeExpExp,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
+  RJ_BEGIN_DECODE_TABLE(primary_decode_table)
+  RJ_DECODE_RUN(0, 4, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(4, 4, &detail::decodeVCndmaskB32Vop2);
+  RJ_DECODE_RUN(8, 4, &detail::decodeVDot2cF32F16Vop2);
+  RJ_DECODE_RUN(12, 4, &detail::decodeVAddF32Vop2);
+  RJ_DECODE_RUN(16, 4, &detail::decodeVSubF32Vop2);
+  RJ_DECODE_RUN(20, 4, &detail::decodeVSubrevF32Vop2);
+  RJ_DECODE_RUN(24, 4, &detail::decodeVFmacLegacyF32Vop2);
+  RJ_DECODE_RUN(28, 4, &detail::decodeVMulLegacyF32Vop2);
+  RJ_DECODE_RUN(32, 4, &detail::decodeVMulF32Vop2);
+  RJ_DECODE_RUN(36, 4, &detail::decodeVMulI32I24Vop2);
+  RJ_DECODE_RUN(40, 4, &detail::decodeVMulHiI32I24Vop2);
+  RJ_DECODE_RUN(44, 4, &detail::decodeVMulU32U24Vop2);
+  RJ_DECODE_RUN(48, 4, &detail::decodeVMulHiU32U24Vop2);
+  RJ_DECODE_RUN(52, 4, &detail::decodeVDot4cI32I8Vop2);
+  RJ_DECODE_RUN(56, 4, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(60, 4, &detail::decodeVMinF32Vop2);
+  RJ_DECODE_RUN(64, 4, &detail::decodeVMaxF32Vop2);
+  RJ_DECODE_RUN(68, 4, &detail::decodeVMinI32Vop2);
+  RJ_DECODE_RUN(72, 4, &detail::decodeVMaxI32Vop2);
+  RJ_DECODE_RUN(76, 4, &detail::decodeVMinU32Vop2);
+  RJ_DECODE_RUN(80, 4, &detail::decodeVMaxU32Vop2);
+  RJ_DECODE_RUN(84, 4, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(88, 4, &detail::decodeVLshrrevB32Vop2);
+  RJ_DECODE_RUN(92, 4, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(96, 4, &detail::decodeVAshrrevI32Vop2);
+  RJ_DECODE_RUN(100, 4, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(104, 4, &detail::decodeVLshlrevB32Vop2);
+  RJ_DECODE_RUN(108, 4, &detail::decodeVAndB32Vop2);
+  RJ_DECODE_RUN(112, 4, &detail::decodeVOrB32Vop2);
+  RJ_DECODE_RUN(116, 4, &detail::decodeVXorB32Vop2);
+  RJ_DECODE_RUN(120, 4, &detail::decodeVXnorB32Vop2);
+  RJ_DECODE_RUN(124, 24, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(148, 4, &detail::decodeVAddNcU32Vop2);
+  RJ_DECODE_RUN(152, 4, &detail::decodeVSubNcU32Vop2);
+  RJ_DECODE_RUN(156, 4, &detail::decodeVSubrevNcU32Vop2);
+  RJ_DECODE_RUN(160, 4, &detail::decodeVAddCoCiU32Vop2);
+  RJ_DECODE_RUN(164, 4, &detail::decodeVSubCoCiU32Vop2);
+  RJ_DECODE_RUN(168, 4, &detail::decodeVSubrevCoCiU32Vop2);
+  RJ_DECODE_RUN(172, 4, &detail::decodeVFmacF32Vop2);
+  RJ_DECODE_RUN(176, 4, &detail::decodeVFmamkF32Vop2);
+  RJ_DECODE_RUN(180, 4, &detail::decodeVFmaakF32Vop2);
+  RJ_DECODE_RUN(184, 4, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(188, 4, &detail::decodeVCvtPkrtzF16F32Vop2);
+  RJ_DECODE_RUN(192, 8, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(200, 4, &detail::decodeVAddF16Vop2);
+  RJ_DECODE_RUN(204, 4, &detail::decodeVSubF16Vop2);
+  RJ_DECODE_RUN(208, 4, &detail::decodeVSubrevF16Vop2);
+  RJ_DECODE_RUN(212, 4, &detail::decodeVMulF16Vop2);
+  RJ_DECODE_RUN(216, 4, &detail::decodeVFmacF16Vop2);
+  RJ_DECODE_RUN(220, 4, &detail::decodeVFmamkF16Vop2);
+  RJ_DECODE_RUN(224, 4, &detail::decodeVFmaakF16Vop2);
+  RJ_DECODE_RUN(228, 4, &detail::decodeVMaxF16Vop2);
+  RJ_DECODE_RUN(232, 4, &detail::decodeVMinF16Vop2);
+  RJ_DECODE_RUN(236, 4, &detail::decodeVLdexpF16Vop2);
+  RJ_DECODE_RUN(240, 4, &detail::decodeVPkFmacF16Vop2);
+  RJ_DECODE_RUN(244, 4, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(248, 1, &DecoderImpl::subDecodeVopc);
+  RJ_DECODE_RUN(249, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(250, 2, &DecoderImpl::subDecodeVopc);
+  RJ_DECODE_RUN(252, 4, &DecoderImpl::subDecodeVop1);
+  RJ_DECODE_RUN(256, 1, &detail::decodeSAddU32Sop2);
+  RJ_DECODE_RUN(257, 1, &detail::decodeSSubU32Sop2);
+  RJ_DECODE_RUN(258, 1, &detail::decodeSAddI32Sop2);
+  RJ_DECODE_RUN(259, 1, &detail::decodeSSubI32Sop2);
+  RJ_DECODE_RUN(260, 1, &detail::decodeSAddcU32Sop2);
+  RJ_DECODE_RUN(261, 1, &detail::decodeSSubbU32Sop2);
+  RJ_DECODE_RUN(262, 1, &detail::decodeSMinI32Sop2);
+  RJ_DECODE_RUN(263, 1, &detail::decodeSMinU32Sop2);
+  RJ_DECODE_RUN(264, 1, &detail::decodeSMaxI32Sop2);
+  RJ_DECODE_RUN(265, 1, &detail::decodeSMaxU32Sop2);
+  RJ_DECODE_RUN(266, 1, &detail::decodeSCselectB32Sop2);
+  RJ_DECODE_RUN(267, 1, &detail::decodeSCselectB64Sop2);
+  RJ_DECODE_RUN(268, 2, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(270, 1, &detail::decodeSAndB32Sop2);
+  RJ_DECODE_RUN(271, 1, &detail::decodeSAndB64Sop2);
+  RJ_DECODE_RUN(272, 1, &detail::decodeSOrB32Sop2);
+  RJ_DECODE_RUN(273, 1, &detail::decodeSOrB64Sop2);
+  RJ_DECODE_RUN(274, 1, &detail::decodeSXorB32Sop2);
+  RJ_DECODE_RUN(275, 1, &detail::decodeSXorB64Sop2);
+  RJ_DECODE_RUN(276, 1, &detail::decodeSAndn2B32Sop2);
+  RJ_DECODE_RUN(277, 1, &detail::decodeSAndn2B64Sop2);
+  RJ_DECODE_RUN(278, 1, &detail::decodeSOrn2B32Sop2);
+  RJ_DECODE_RUN(279, 1, &detail::decodeSOrn2B64Sop2);
+  RJ_DECODE_RUN(280, 1, &detail::decodeSNandB32Sop2);
+  RJ_DECODE_RUN(281, 1, &detail::decodeSNandB64Sop2);
+  RJ_DECODE_RUN(282, 1, &detail::decodeSNorB32Sop2);
+  RJ_DECODE_RUN(283, 1, &detail::decodeSNorB64Sop2);
+  RJ_DECODE_RUN(284, 1, &detail::decodeSXnorB32Sop2);
+  RJ_DECODE_RUN(285, 1, &detail::decodeSXnorB64Sop2);
+  RJ_DECODE_RUN(286, 1, &detail::decodeSLshlB32Sop2);
+  RJ_DECODE_RUN(287, 1, &detail::decodeSLshlB64Sop2);
+  RJ_DECODE_RUN(288, 1, &detail::decodeSLshrB32Sop2);
+  RJ_DECODE_RUN(289, 1, &detail::decodeSLshrB64Sop2);
+  RJ_DECODE_RUN(290, 1, &detail::decodeSAshrI32Sop2);
+  RJ_DECODE_RUN(291, 1, &detail::decodeSAshrI64Sop2);
+  RJ_DECODE_RUN(292, 1, &detail::decodeSBfmB32Sop2);
+  RJ_DECODE_RUN(293, 1, &detail::decodeSBfmB64Sop2);
+  RJ_DECODE_RUN(294, 1, &detail::decodeSMulI32Sop2);
+  RJ_DECODE_RUN(295, 1, &detail::decodeSBfeU32Sop2);
+  RJ_DECODE_RUN(296, 1, &detail::decodeSBfeI32Sop2);
+  RJ_DECODE_RUN(297, 1, &detail::decodeSBfeU64Sop2);
+  RJ_DECODE_RUN(298, 1, &detail::decodeSBfeI64Sop2);
+  RJ_DECODE_RUN(299, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(300, 1, &detail::decodeSAbsdiffI32Sop2);
+  RJ_DECODE_RUN(301, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(302, 1, &detail::decodeSLshl1AddU32Sop2);
+  RJ_DECODE_RUN(303, 1, &detail::decodeSLshl2AddU32Sop2);
+  RJ_DECODE_RUN(304, 1, &detail::decodeSLshl3AddU32Sop2);
+  RJ_DECODE_RUN(305, 1, &detail::decodeSLshl4AddU32Sop2);
+  RJ_DECODE_RUN(306, 1, &detail::decodeSPackLlB32B16Sop2);
+  RJ_DECODE_RUN(307, 1, &detail::decodeSPackLhB32B16Sop2);
+  RJ_DECODE_RUN(308, 1, &detail::decodeSPackHhB32B16Sop2);
+  RJ_DECODE_RUN(309, 1, &detail::decodeSMulHiU32Sop2);
+  RJ_DECODE_RUN(310, 1, &detail::decodeSMulHiI32Sop2);
+  RJ_DECODE_RUN(311, 41, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(352, 1, &detail::decodeSMovkI32Sopk);
+  RJ_DECODE_RUN(353, 1, &detail::decodeSVersionSopk);
+  RJ_DECODE_RUN(354, 1, &detail::decodeSCmovkI32Sopk);
+  RJ_DECODE_RUN(355, 1, &detail::decodeSCmpkEqI32Sopk);
+  RJ_DECODE_RUN(356, 1, &detail::decodeSCmpkLgI32Sopk);
+  RJ_DECODE_RUN(357, 1, &detail::decodeSCmpkGtI32Sopk);
+  RJ_DECODE_RUN(358, 1, &detail::decodeSCmpkGeI32Sopk);
+  RJ_DECODE_RUN(359, 1, &detail::decodeSCmpkLtI32Sopk);
+  RJ_DECODE_RUN(360, 1, &detail::decodeSCmpkLeI32Sopk);
+  RJ_DECODE_RUN(361, 1, &detail::decodeSCmpkEqU32Sopk);
+  RJ_DECODE_RUN(362, 1, &detail::decodeSCmpkLgU32Sopk);
+  RJ_DECODE_RUN(363, 1, &detail::decodeSCmpkGtU32Sopk);
+  RJ_DECODE_RUN(364, 1, &detail::decodeSCmpkGeU32Sopk);
+  RJ_DECODE_RUN(365, 1, &detail::decodeSCmpkLtU32Sopk);
+  RJ_DECODE_RUN(366, 1, &detail::decodeSCmpkLeU32Sopk);
+  RJ_DECODE_RUN(367, 1, &detail::decodeSAddkI32Sopk);
+  RJ_DECODE_RUN(368, 1, &detail::decodeSMulkI32Sopk);
+  RJ_DECODE_RUN(369, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(370, 1, &detail::decodeSGetregB32Sopk);
+  RJ_DECODE_RUN(371, 1, &detail::decodeSSetregB32Sopk);
+  RJ_DECODE_RUN(372, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(373, 1, &detail::decodeSSetregImm32B32Sopk);
+  RJ_DECODE_RUN(374, 1, &detail::decodeSCallB64Sopk);
+  RJ_DECODE_RUN(375, 1, &detail::decodeSWaitcntVscntSopk);
+  RJ_DECODE_RUN(376, 1, &detail::decodeSWaitcntVmcntSopk);
+  RJ_DECODE_RUN(377, 1, &detail::decodeSWaitcntExpcntSopk);
+  RJ_DECODE_RUN(378, 1, &detail::decodeSWaitcntLgkmcntSopk);
+  RJ_DECODE_RUN(379, 1, &detail::decodeSSubvectorLoopBeginSopk);
+  RJ_DECODE_RUN(380, 1, &detail::decodeSSubvectorLoopEndSopk);
+  RJ_DECODE_RUN(381, 1, &DecoderImpl::subDecodeSop1);
+  RJ_DECODE_RUN(382, 1, &DecoderImpl::subDecodeSopc);
+  RJ_DECODE_RUN(383, 1, &DecoderImpl::subDecodeSopp);
+  RJ_DECODE_RUN(384, 16, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(400, 8, &DecoderImpl::subDecodeVintrp);
+  RJ_DECODE_RUN(408, 8, &DecoderImpl::subDecodeVop3p);
+  RJ_DECODE_RUN(416, 8, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(424, 7, &DecoderImpl::subDecodeVop3);
+  RJ_DECODE_RUN(431, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(432, 4, &DecoderImpl::subDecodeDs);
+  RJ_DECODE_RUN(436, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(437, 3, &DecoderImpl::subDecodeDs);
+  RJ_DECODE_RUN(440, 8, &DecoderImpl::subDecodeFlat);
+  RJ_DECODE_RUN(448, 8, &DecoderImpl::subDecodeMubuf);
+  RJ_DECODE_RUN(456, 8, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(464, 8, &DecoderImpl::subDecodeMtbuf);
+  RJ_DECODE_RUN(472, 8, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(480, 8, &DecoderImpl::subDecodeMimg);
+  RJ_DECODE_RUN(488, 2, &DecoderImpl::subDecodeSmem);
+  RJ_DECODE_RUN(490, 6, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(496, 8, &detail::decodeExpExp);
+  RJ_DECODE_RUN(504, 8, &DecoderImpl::decodeInvalid);
+  RJ_END_DECODE_TABLE()
 
-};
+  RJ_BEGIN_DECODE_TABLE(sub_decode_vopc)
+  RJ_DECODE_RUN(0, 1, &detail::decodeVCmpFF32Vopc);
+  RJ_DECODE_RUN(1, 1, &detail::decodeVCmpLtF32Vopc);
+  RJ_DECODE_RUN(2, 1, &detail::decodeVCmpEqF32Vopc);
+  RJ_DECODE_RUN(3, 1, &detail::decodeVCmpLeF32Vopc);
+  RJ_DECODE_RUN(4, 1, &detail::decodeVCmpGtF32Vopc);
+  RJ_DECODE_RUN(5, 1, &detail::decodeVCmpLgF32Vopc);
+  RJ_DECODE_RUN(6, 1, &detail::decodeVCmpGeF32Vopc);
+  RJ_DECODE_RUN(7, 1, &detail::decodeVCmpOF32Vopc);
+  RJ_DECODE_RUN(8, 1, &detail::decodeVCmpUF32Vopc);
+  RJ_DECODE_RUN(9, 1, &detail::decodeVCmpNgeF32Vopc);
+  RJ_DECODE_RUN(10, 1, &detail::decodeVCmpNlgF32Vopc);
+  RJ_DECODE_RUN(11, 1, &detail::decodeVCmpNgtF32Vopc);
+  RJ_DECODE_RUN(12, 1, &detail::decodeVCmpNleF32Vopc);
+  RJ_DECODE_RUN(13, 1, &detail::decodeVCmpNeqF32Vopc);
+  RJ_DECODE_RUN(14, 1, &detail::decodeVCmpNltF32Vopc);
+  RJ_DECODE_RUN(15, 1, &detail::decodeVCmpTruF32Vopc);
+  RJ_DECODE_RUN(16, 1, &detail::decodeVCmpxFF32Vopc);
+  RJ_DECODE_RUN(17, 1, &detail::decodeVCmpxLtF32Vopc);
+  RJ_DECODE_RUN(18, 1, &detail::decodeVCmpxEqF32Vopc);
+  RJ_DECODE_RUN(19, 1, &detail::decodeVCmpxLeF32Vopc);
+  RJ_DECODE_RUN(20, 1, &detail::decodeVCmpxGtF32Vopc);
+  RJ_DECODE_RUN(21, 1, &detail::decodeVCmpxLgF32Vopc);
+  RJ_DECODE_RUN(22, 1, &detail::decodeVCmpxGeF32Vopc);
+  RJ_DECODE_RUN(23, 1, &detail::decodeVCmpxOF32Vopc);
+  RJ_DECODE_RUN(24, 1, &detail::decodeVCmpxUF32Vopc);
+  RJ_DECODE_RUN(25, 1, &detail::decodeVCmpxNgeF32Vopc);
+  RJ_DECODE_RUN(26, 1, &detail::decodeVCmpxNlgF32Vopc);
+  RJ_DECODE_RUN(27, 1, &detail::decodeVCmpxNgtF32Vopc);
+  RJ_DECODE_RUN(28, 1, &detail::decodeVCmpxNleF32Vopc);
+  RJ_DECODE_RUN(29, 1, &detail::decodeVCmpxNeqF32Vopc);
+  RJ_DECODE_RUN(30, 1, &detail::decodeVCmpxNltF32Vopc);
+  RJ_DECODE_RUN(31, 1, &detail::decodeVCmpxTruF32Vopc);
+  RJ_DECODE_RUN(32, 1, &detail::decodeVCmpFF64Vopc);
+  RJ_DECODE_RUN(33, 1, &detail::decodeVCmpLtF64Vopc);
+  RJ_DECODE_RUN(34, 1, &detail::decodeVCmpEqF64Vopc);
+  RJ_DECODE_RUN(35, 1, &detail::decodeVCmpLeF64Vopc);
+  RJ_DECODE_RUN(36, 1, &detail::decodeVCmpGtF64Vopc);
+  RJ_DECODE_RUN(37, 1, &detail::decodeVCmpLgF64Vopc);
+  RJ_DECODE_RUN(38, 1, &detail::decodeVCmpGeF64Vopc);
+  RJ_DECODE_RUN(39, 1, &detail::decodeVCmpOF64Vopc);
+  RJ_DECODE_RUN(40, 1, &detail::decodeVCmpUF64Vopc);
+  RJ_DECODE_RUN(41, 1, &detail::decodeVCmpNgeF64Vopc);
+  RJ_DECODE_RUN(42, 1, &detail::decodeVCmpNlgF64Vopc);
+  RJ_DECODE_RUN(43, 1, &detail::decodeVCmpNgtF64Vopc);
+  RJ_DECODE_RUN(44, 1, &detail::decodeVCmpNleF64Vopc);
+  RJ_DECODE_RUN(45, 1, &detail::decodeVCmpNeqF64Vopc);
+  RJ_DECODE_RUN(46, 1, &detail::decodeVCmpNltF64Vopc);
+  RJ_DECODE_RUN(47, 1, &detail::decodeVCmpTruF64Vopc);
+  RJ_DECODE_RUN(48, 1, &detail::decodeVCmpxFF64Vopc);
+  RJ_DECODE_RUN(49, 1, &detail::decodeVCmpxLtF64Vopc);
+  RJ_DECODE_RUN(50, 1, &detail::decodeVCmpxEqF64Vopc);
+  RJ_DECODE_RUN(51, 1, &detail::decodeVCmpxLeF64Vopc);
+  RJ_DECODE_RUN(52, 1, &detail::decodeVCmpxGtF64Vopc);
+  RJ_DECODE_RUN(53, 1, &detail::decodeVCmpxLgF64Vopc);
+  RJ_DECODE_RUN(54, 1, &detail::decodeVCmpxGeF64Vopc);
+  RJ_DECODE_RUN(55, 1, &detail::decodeVCmpxOF64Vopc);
+  RJ_DECODE_RUN(56, 1, &detail::decodeVCmpxUF64Vopc);
+  RJ_DECODE_RUN(57, 1, &detail::decodeVCmpxNgeF64Vopc);
+  RJ_DECODE_RUN(58, 1, &detail::decodeVCmpxNlgF64Vopc);
+  RJ_DECODE_RUN(59, 1, &detail::decodeVCmpxNgtF64Vopc);
+  RJ_DECODE_RUN(60, 1, &detail::decodeVCmpxNleF64Vopc);
+  RJ_DECODE_RUN(61, 1, &detail::decodeVCmpxNeqF64Vopc);
+  RJ_DECODE_RUN(62, 1, &detail::decodeVCmpxNltF64Vopc);
+  RJ_DECODE_RUN(63, 1, &detail::decodeVCmpxTruF64Vopc);
+  RJ_DECODE_RUN(64, 64, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(128, 1, &detail::decodeVCmpFI32Vopc);
+  RJ_DECODE_RUN(129, 1, &detail::decodeVCmpLtI32Vopc);
+  RJ_DECODE_RUN(130, 1, &detail::decodeVCmpEqI32Vopc);
+  RJ_DECODE_RUN(131, 1, &detail::decodeVCmpLeI32Vopc);
+  RJ_DECODE_RUN(132, 1, &detail::decodeVCmpGtI32Vopc);
+  RJ_DECODE_RUN(133, 1, &detail::decodeVCmpNeI32Vopc);
+  RJ_DECODE_RUN(134, 1, &detail::decodeVCmpGeI32Vopc);
+  RJ_DECODE_RUN(135, 1, &detail::decodeVCmpTI32Vopc);
+  RJ_DECODE_RUN(136, 1, &detail::decodeVCmpClassF32Vopc);
+  RJ_DECODE_RUN(137, 1, &detail::decodeVCmpLtI16Vopc);
+  RJ_DECODE_RUN(138, 1, &detail::decodeVCmpEqI16Vopc);
+  RJ_DECODE_RUN(139, 1, &detail::decodeVCmpLeI16Vopc);
+  RJ_DECODE_RUN(140, 1, &detail::decodeVCmpGtI16Vopc);
+  RJ_DECODE_RUN(141, 1, &detail::decodeVCmpNeI16Vopc);
+  RJ_DECODE_RUN(142, 1, &detail::decodeVCmpGeI16Vopc);
+  RJ_DECODE_RUN(143, 1, &detail::decodeVCmpClassF16Vopc);
+  RJ_DECODE_RUN(144, 1, &detail::decodeVCmpxFI32Vopc);
+  RJ_DECODE_RUN(145, 1, &detail::decodeVCmpxLtI32Vopc);
+  RJ_DECODE_RUN(146, 1, &detail::decodeVCmpxEqI32Vopc);
+  RJ_DECODE_RUN(147, 1, &detail::decodeVCmpxLeI32Vopc);
+  RJ_DECODE_RUN(148, 1, &detail::decodeVCmpxGtI32Vopc);
+  RJ_DECODE_RUN(149, 1, &detail::decodeVCmpxNeI32Vopc);
+  RJ_DECODE_RUN(150, 1, &detail::decodeVCmpxGeI32Vopc);
+  RJ_DECODE_RUN(151, 1, &detail::decodeVCmpxTI32Vopc);
+  RJ_DECODE_RUN(152, 1, &detail::decodeVCmpxClassF32Vopc);
+  RJ_DECODE_RUN(153, 1, &detail::decodeVCmpxLtI16Vopc);
+  RJ_DECODE_RUN(154, 1, &detail::decodeVCmpxEqI16Vopc);
+  RJ_DECODE_RUN(155, 1, &detail::decodeVCmpxLeI16Vopc);
+  RJ_DECODE_RUN(156, 1, &detail::decodeVCmpxGtI16Vopc);
+  RJ_DECODE_RUN(157, 1, &detail::decodeVCmpxNeI16Vopc);
+  RJ_DECODE_RUN(158, 1, &detail::decodeVCmpxGeI16Vopc);
+  RJ_DECODE_RUN(159, 1, &detail::decodeVCmpxClassF16Vopc);
+  RJ_DECODE_RUN(160, 1, &detail::decodeVCmpFI64Vopc);
+  RJ_DECODE_RUN(161, 1, &detail::decodeVCmpLtI64Vopc);
+  RJ_DECODE_RUN(162, 1, &detail::decodeVCmpEqI64Vopc);
+  RJ_DECODE_RUN(163, 1, &detail::decodeVCmpLeI64Vopc);
+  RJ_DECODE_RUN(164, 1, &detail::decodeVCmpGtI64Vopc);
+  RJ_DECODE_RUN(165, 1, &detail::decodeVCmpNeI64Vopc);
+  RJ_DECODE_RUN(166, 1, &detail::decodeVCmpGeI64Vopc);
+  RJ_DECODE_RUN(167, 1, &detail::decodeVCmpTI64Vopc);
+  RJ_DECODE_RUN(168, 1, &detail::decodeVCmpClassF64Vopc);
+  RJ_DECODE_RUN(169, 1, &detail::decodeVCmpLtU16Vopc);
+  RJ_DECODE_RUN(170, 1, &detail::decodeVCmpEqU16Vopc);
+  RJ_DECODE_RUN(171, 1, &detail::decodeVCmpLeU16Vopc);
+  RJ_DECODE_RUN(172, 1, &detail::decodeVCmpGtU16Vopc);
+  RJ_DECODE_RUN(173, 1, &detail::decodeVCmpNeU16Vopc);
+  RJ_DECODE_RUN(174, 1, &detail::decodeVCmpGeU16Vopc);
+  RJ_DECODE_RUN(175, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(176, 1, &detail::decodeVCmpxFI64Vopc);
+  RJ_DECODE_RUN(177, 1, &detail::decodeVCmpxLtI64Vopc);
+  RJ_DECODE_RUN(178, 1, &detail::decodeVCmpxEqI64Vopc);
+  RJ_DECODE_RUN(179, 1, &detail::decodeVCmpxLeI64Vopc);
+  RJ_DECODE_RUN(180, 1, &detail::decodeVCmpxGtI64Vopc);
+  RJ_DECODE_RUN(181, 1, &detail::decodeVCmpxNeI64Vopc);
+  RJ_DECODE_RUN(182, 1, &detail::decodeVCmpxGeI64Vopc);
+  RJ_DECODE_RUN(183, 1, &detail::decodeVCmpxTI64Vopc);
+  RJ_DECODE_RUN(184, 1, &detail::decodeVCmpxClassF64Vopc);
+  RJ_DECODE_RUN(185, 1, &detail::decodeVCmpxLtU16Vopc);
+  RJ_DECODE_RUN(186, 1, &detail::decodeVCmpxEqU16Vopc);
+  RJ_DECODE_RUN(187, 1, &detail::decodeVCmpxLeU16Vopc);
+  RJ_DECODE_RUN(188, 1, &detail::decodeVCmpxGtU16Vopc);
+  RJ_DECODE_RUN(189, 1, &detail::decodeVCmpxNeU16Vopc);
+  RJ_DECODE_RUN(190, 1, &detail::decodeVCmpxGeU16Vopc);
+  RJ_DECODE_RUN(191, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(192, 1, &detail::decodeVCmpFU32Vopc);
+  RJ_DECODE_RUN(193, 1, &detail::decodeVCmpLtU32Vopc);
+  RJ_DECODE_RUN(194, 1, &detail::decodeVCmpEqU32Vopc);
+  RJ_DECODE_RUN(195, 1, &detail::decodeVCmpLeU32Vopc);
+  RJ_DECODE_RUN(196, 1, &detail::decodeVCmpGtU32Vopc);
+  RJ_DECODE_RUN(197, 1, &detail::decodeVCmpNeU32Vopc);
+  RJ_DECODE_RUN(198, 1, &detail::decodeVCmpGeU32Vopc);
+  RJ_DECODE_RUN(199, 1, &detail::decodeVCmpTU32Vopc);
+  RJ_DECODE_RUN(200, 1, &detail::decodeVCmpFF16Vopc);
+  RJ_DECODE_RUN(201, 1, &detail::decodeVCmpLtF16Vopc);
+  RJ_DECODE_RUN(202, 1, &detail::decodeVCmpEqF16Vopc);
+  RJ_DECODE_RUN(203, 1, &detail::decodeVCmpLeF16Vopc);
+  RJ_DECODE_RUN(204, 1, &detail::decodeVCmpGtF16Vopc);
+  RJ_DECODE_RUN(205, 1, &detail::decodeVCmpLgF16Vopc);
+  RJ_DECODE_RUN(206, 1, &detail::decodeVCmpGeF16Vopc);
+  RJ_DECODE_RUN(207, 1, &detail::decodeVCmpOF16Vopc);
+  RJ_DECODE_RUN(208, 1, &detail::decodeVCmpxFU32Vopc);
+  RJ_DECODE_RUN(209, 1, &detail::decodeVCmpxLtU32Vopc);
+  RJ_DECODE_RUN(210, 1, &detail::decodeVCmpxEqU32Vopc);
+  RJ_DECODE_RUN(211, 1, &detail::decodeVCmpxLeU32Vopc);
+  RJ_DECODE_RUN(212, 1, &detail::decodeVCmpxGtU32Vopc);
+  RJ_DECODE_RUN(213, 1, &detail::decodeVCmpxNeU32Vopc);
+  RJ_DECODE_RUN(214, 1, &detail::decodeVCmpxGeU32Vopc);
+  RJ_DECODE_RUN(215, 1, &detail::decodeVCmpxTU32Vopc);
+  RJ_DECODE_RUN(216, 1, &detail::decodeVCmpxFF16Vopc);
+  RJ_DECODE_RUN(217, 1, &detail::decodeVCmpxLtF16Vopc);
+  RJ_DECODE_RUN(218, 1, &detail::decodeVCmpxEqF16Vopc);
+  RJ_DECODE_RUN(219, 1, &detail::decodeVCmpxLeF16Vopc);
+  RJ_DECODE_RUN(220, 1, &detail::decodeVCmpxGtF16Vopc);
+  RJ_DECODE_RUN(221, 1, &detail::decodeVCmpxLgF16Vopc);
+  RJ_DECODE_RUN(222, 1, &detail::decodeVCmpxGeF16Vopc);
+  RJ_DECODE_RUN(223, 1, &detail::decodeVCmpxOF16Vopc);
+  RJ_DECODE_RUN(224, 1, &detail::decodeVCmpFU64Vopc);
+  RJ_DECODE_RUN(225, 1, &detail::decodeVCmpLtU64Vopc);
+  RJ_DECODE_RUN(226, 1, &detail::decodeVCmpEqU64Vopc);
+  RJ_DECODE_RUN(227, 1, &detail::decodeVCmpLeU64Vopc);
+  RJ_DECODE_RUN(228, 1, &detail::decodeVCmpGtU64Vopc);
+  RJ_DECODE_RUN(229, 1, &detail::decodeVCmpNeU64Vopc);
+  RJ_DECODE_RUN(230, 1, &detail::decodeVCmpGeU64Vopc);
+  RJ_DECODE_RUN(231, 1, &detail::decodeVCmpTU64Vopc);
+  RJ_DECODE_RUN(232, 1, &detail::decodeVCmpUF16Vopc);
+  RJ_DECODE_RUN(233, 1, &detail::decodeVCmpNgeF16Vopc);
+  RJ_DECODE_RUN(234, 1, &detail::decodeVCmpNlgF16Vopc);
+  RJ_DECODE_RUN(235, 1, &detail::decodeVCmpNgtF16Vopc);
+  RJ_DECODE_RUN(236, 1, &detail::decodeVCmpNleF16Vopc);
+  RJ_DECODE_RUN(237, 1, &detail::decodeVCmpNeqF16Vopc);
+  RJ_DECODE_RUN(238, 1, &detail::decodeVCmpNltF16Vopc);
+  RJ_DECODE_RUN(239, 1, &detail::decodeVCmpTruF16Vopc);
+  RJ_DECODE_RUN(240, 1, &detail::decodeVCmpxFU64Vopc);
+  RJ_DECODE_RUN(241, 1, &detail::decodeVCmpxLtU64Vopc);
+  RJ_DECODE_RUN(242, 1, &detail::decodeVCmpxEqU64Vopc);
+  RJ_DECODE_RUN(243, 1, &detail::decodeVCmpxLeU64Vopc);
+  RJ_DECODE_RUN(244, 1, &detail::decodeVCmpxGtU64Vopc);
+  RJ_DECODE_RUN(245, 1, &detail::decodeVCmpxNeU64Vopc);
+  RJ_DECODE_RUN(246, 1, &detail::decodeVCmpxGeU64Vopc);
+  RJ_DECODE_RUN(247, 1, &detail::decodeVCmpxTU64Vopc);
+  RJ_DECODE_RUN(248, 1, &detail::decodeVCmpxUF16Vopc);
+  RJ_DECODE_RUN(249, 1, &detail::decodeVCmpxNgeF16Vopc);
+  RJ_DECODE_RUN(250, 1, &detail::decodeVCmpxNlgF16Vopc);
+  RJ_DECODE_RUN(251, 1, &detail::decodeVCmpxNgtF16Vopc);
+  RJ_DECODE_RUN(252, 1, &detail::decodeVCmpxNleF16Vopc);
+  RJ_DECODE_RUN(253, 1, &detail::decodeVCmpxNeqF16Vopc);
+  RJ_DECODE_RUN(254, 1, &detail::decodeVCmpxNltF16Vopc);
+  RJ_DECODE_RUN(255, 1, &detail::decodeVCmpxTruF16Vopc);
+  RJ_END_DECODE_TABLE()
 
-const std::array<DecoderImpl::DecodeFunc, 256> DecoderImpl::sub_decode_vopc = {
+  RJ_BEGIN_DECODE_TABLE(sub_decode_vop1)
+  RJ_DECODE_RUN(0, 1, &detail::decodeVNopVop1);
+  RJ_DECODE_RUN(1, 1, &detail::decodeVMovB32Vop1);
+  RJ_DECODE_RUN(2, 1, &detail::decodeVReadfirstlaneB32Vop1);
+  RJ_DECODE_RUN(3, 1, &detail::decodeVCvtI32F64Vop1);
+  RJ_DECODE_RUN(4, 1, &detail::decodeVCvtF64I32Vop1);
+  RJ_DECODE_RUN(5, 1, &detail::decodeVCvtF32I32Vop1);
+  RJ_DECODE_RUN(6, 1, &detail::decodeVCvtF32U32Vop1);
+  RJ_DECODE_RUN(7, 1, &detail::decodeVCvtU32F32Vop1);
+  RJ_DECODE_RUN(8, 1, &detail::decodeVCvtI32F32Vop1);
+  RJ_DECODE_RUN(9, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(10, 1, &detail::decodeVCvtF16F32Vop1);
+  RJ_DECODE_RUN(11, 1, &detail::decodeVCvtF32F16Vop1);
+  RJ_DECODE_RUN(12, 1, &detail::decodeVCvtRpiI32F32Vop1);
+  RJ_DECODE_RUN(13, 1, &detail::decodeVCvtFlrI32F32Vop1);
+  RJ_DECODE_RUN(14, 1, &detail::decodeVCvtOffF32I4Vop1);
+  RJ_DECODE_RUN(15, 1, &detail::decodeVCvtF32F64Vop1);
+  RJ_DECODE_RUN(16, 1, &detail::decodeVCvtF64F32Vop1);
+  RJ_DECODE_RUN(17, 1, &detail::decodeVCvtF32Ubyte0Vop1);
+  RJ_DECODE_RUN(18, 1, &detail::decodeVCvtF32Ubyte1Vop1);
+  RJ_DECODE_RUN(19, 1, &detail::decodeVCvtF32Ubyte2Vop1);
+  RJ_DECODE_RUN(20, 1, &detail::decodeVCvtF32Ubyte3Vop1);
+  RJ_DECODE_RUN(21, 1, &detail::decodeVCvtU32F64Vop1);
+  RJ_DECODE_RUN(22, 1, &detail::decodeVCvtF64U32Vop1);
+  RJ_DECODE_RUN(23, 1, &detail::decodeVTruncF64Vop1);
+  RJ_DECODE_RUN(24, 1, &detail::decodeVCeilF64Vop1);
+  RJ_DECODE_RUN(25, 1, &detail::decodeVRndneF64Vop1);
+  RJ_DECODE_RUN(26, 1, &detail::decodeVFloorF64Vop1);
+  RJ_DECODE_RUN(27, 1, &detail::decodeVPipeflushVop1);
+  RJ_DECODE_RUN(28, 4, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(32, 1, &detail::decodeVFractF32Vop1);
+  RJ_DECODE_RUN(33, 1, &detail::decodeVTruncF32Vop1);
+  RJ_DECODE_RUN(34, 1, &detail::decodeVCeilF32Vop1);
+  RJ_DECODE_RUN(35, 1, &detail::decodeVRndneF32Vop1);
+  RJ_DECODE_RUN(36, 1, &detail::decodeVFloorF32Vop1);
+  RJ_DECODE_RUN(37, 1, &detail::decodeVExpF32Vop1);
+  RJ_DECODE_RUN(38, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(39, 1, &detail::decodeVLogF32Vop1);
+  RJ_DECODE_RUN(40, 2, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(42, 1, &detail::decodeVRcpF32Vop1);
+  RJ_DECODE_RUN(43, 1, &detail::decodeVRcpIflagF32Vop1);
+  RJ_DECODE_RUN(44, 2, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(46, 1, &detail::decodeVRsqF32Vop1);
+  RJ_DECODE_RUN(47, 1, &detail::decodeVRcpF64Vop1);
+  RJ_DECODE_RUN(48, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(49, 1, &detail::decodeVRsqF64Vop1);
+  RJ_DECODE_RUN(50, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(51, 1, &detail::decodeVSqrtF32Vop1);
+  RJ_DECODE_RUN(52, 1, &detail::decodeVSqrtF64Vop1);
+  RJ_DECODE_RUN(53, 1, &detail::decodeVSinF32Vop1);
+  RJ_DECODE_RUN(54, 1, &detail::decodeVCosF32Vop1);
+  RJ_DECODE_RUN(55, 1, &detail::decodeVNotB32Vop1);
+  RJ_DECODE_RUN(56, 1, &detail::decodeVBfrevB32Vop1);
+  RJ_DECODE_RUN(57, 1, &detail::decodeVFfbhU32Vop1);
+  RJ_DECODE_RUN(58, 1, &detail::decodeVFfblB32Vop1);
+  RJ_DECODE_RUN(59, 1, &detail::decodeVFfbhI32Vop1);
+  RJ_DECODE_RUN(60, 1, &detail::decodeVFrexpExpI32F64Vop1);
+  RJ_DECODE_RUN(61, 1, &detail::decodeVFrexpMantF64Vop1);
+  RJ_DECODE_RUN(62, 1, &detail::decodeVFractF64Vop1);
+  RJ_DECODE_RUN(63, 1, &detail::decodeVFrexpExpI32F32Vop1);
+  RJ_DECODE_RUN(64, 1, &detail::decodeVFrexpMantF32Vop1);
+  RJ_DECODE_RUN(65, 1, &detail::decodeVClrexcpVop1);
+  RJ_DECODE_RUN(66, 1, &detail::decodeVMovreldB32Vop1);
+  RJ_DECODE_RUN(67, 1, &detail::decodeVMovrelsB32Vop1);
+  RJ_DECODE_RUN(68, 1, &detail::decodeVMovrelsdB32Vop1);
+  RJ_DECODE_RUN(69, 3, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(72, 1, &detail::decodeVMovrelsd2B32Vop1);
+  RJ_DECODE_RUN(73, 7, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(80, 1, &detail::decodeVCvtF16U16Vop1);
+  RJ_DECODE_RUN(81, 1, &detail::decodeVCvtF16I16Vop1);
+  RJ_DECODE_RUN(82, 1, &detail::decodeVCvtU16F16Vop1);
+  RJ_DECODE_RUN(83, 1, &detail::decodeVCvtI16F16Vop1);
+  RJ_DECODE_RUN(84, 1, &detail::decodeVRcpF16Vop1);
+  RJ_DECODE_RUN(85, 1, &detail::decodeVSqrtF16Vop1);
+  RJ_DECODE_RUN(86, 1, &detail::decodeVRsqF16Vop1);
+  RJ_DECODE_RUN(87, 1, &detail::decodeVLogF16Vop1);
+  RJ_DECODE_RUN(88, 1, &detail::decodeVExpF16Vop1);
+  RJ_DECODE_RUN(89, 1, &detail::decodeVFrexpMantF16Vop1);
+  RJ_DECODE_RUN(90, 1, &detail::decodeVFrexpExpI16F16Vop1);
+  RJ_DECODE_RUN(91, 1, &detail::decodeVFloorF16Vop1);
+  RJ_DECODE_RUN(92, 1, &detail::decodeVCeilF16Vop1);
+  RJ_DECODE_RUN(93, 1, &detail::decodeVTruncF16Vop1);
+  RJ_DECODE_RUN(94, 1, &detail::decodeVRndneF16Vop1);
+  RJ_DECODE_RUN(95, 1, &detail::decodeVFractF16Vop1);
+  RJ_DECODE_RUN(96, 1, &detail::decodeVSinF16Vop1);
+  RJ_DECODE_RUN(97, 1, &detail::decodeVCosF16Vop1);
+  RJ_DECODE_RUN(98, 1, &detail::decodeVSatPkU8I16Vop1);
+  RJ_DECODE_RUN(99, 1, &detail::decodeVCvtNormI16F16Vop1);
+  RJ_DECODE_RUN(100, 1, &detail::decodeVCvtNormU16F16Vop1);
+  RJ_DECODE_RUN(101, 1, &detail::decodeVSwapB32Vop1);
+  RJ_DECODE_RUN(102, 2, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(104, 1, &detail::decodeVSwaprelB32Vop1);
+  RJ_DECODE_RUN(105, 151, &DecoderImpl::decodeInvalid);
+  RJ_END_DECODE_TABLE()
 
-    &detail::decodeVCmpFF32Vopc,      &detail::decodeVCmpLtF32Vopc,
-    &detail::decodeVCmpEqF32Vopc,     &detail::decodeVCmpLeF32Vopc,
-    &detail::decodeVCmpGtF32Vopc,     &detail::decodeVCmpLgF32Vopc,
-    &detail::decodeVCmpGeF32Vopc,     &detail::decodeVCmpOF32Vopc,
-    &detail::decodeVCmpUF32Vopc,      &detail::decodeVCmpNgeF32Vopc,
-    &detail::decodeVCmpNlgF32Vopc,    &detail::decodeVCmpNgtF32Vopc,
-    &detail::decodeVCmpNleF32Vopc,    &detail::decodeVCmpNeqF32Vopc,
-    &detail::decodeVCmpNltF32Vopc,    &detail::decodeVCmpTruF32Vopc,
-    &detail::decodeVCmpxFF32Vopc,     &detail::decodeVCmpxLtF32Vopc,
-    &detail::decodeVCmpxEqF32Vopc,    &detail::decodeVCmpxLeF32Vopc,
-    &detail::decodeVCmpxGtF32Vopc,    &detail::decodeVCmpxLgF32Vopc,
-    &detail::decodeVCmpxGeF32Vopc,    &detail::decodeVCmpxOF32Vopc,
-    &detail::decodeVCmpxUF32Vopc,     &detail::decodeVCmpxNgeF32Vopc,
-    &detail::decodeVCmpxNlgF32Vopc,   &detail::decodeVCmpxNgtF32Vopc,
-    &detail::decodeVCmpxNleF32Vopc,   &detail::decodeVCmpxNeqF32Vopc,
-    &detail::decodeVCmpxNltF32Vopc,   &detail::decodeVCmpxTruF32Vopc,
-    &detail::decodeVCmpFF64Vopc,      &detail::decodeVCmpLtF64Vopc,
-    &detail::decodeVCmpEqF64Vopc,     &detail::decodeVCmpLeF64Vopc,
-    &detail::decodeVCmpGtF64Vopc,     &detail::decodeVCmpLgF64Vopc,
-    &detail::decodeVCmpGeF64Vopc,     &detail::decodeVCmpOF64Vopc,
-    &detail::decodeVCmpUF64Vopc,      &detail::decodeVCmpNgeF64Vopc,
-    &detail::decodeVCmpNlgF64Vopc,    &detail::decodeVCmpNgtF64Vopc,
-    &detail::decodeVCmpNleF64Vopc,    &detail::decodeVCmpNeqF64Vopc,
-    &detail::decodeVCmpNltF64Vopc,    &detail::decodeVCmpTruF64Vopc,
-    &detail::decodeVCmpxFF64Vopc,     &detail::decodeVCmpxLtF64Vopc,
-    &detail::decodeVCmpxEqF64Vopc,    &detail::decodeVCmpxLeF64Vopc,
-    &detail::decodeVCmpxGtF64Vopc,    &detail::decodeVCmpxLgF64Vopc,
-    &detail::decodeVCmpxGeF64Vopc,    &detail::decodeVCmpxOF64Vopc,
-    &detail::decodeVCmpxUF64Vopc,     &detail::decodeVCmpxNgeF64Vopc,
-    &detail::decodeVCmpxNlgF64Vopc,   &detail::decodeVCmpxNgtF64Vopc,
-    &detail::decodeVCmpxNleF64Vopc,   &detail::decodeVCmpxNeqF64Vopc,
-    &detail::decodeVCmpxNltF64Vopc,   &detail::decodeVCmpxTruF64Vopc,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,      &DecoderImpl::decodeInvalid,
-    &detail::decodeVCmpFI32Vopc,      &detail::decodeVCmpLtI32Vopc,
-    &detail::decodeVCmpEqI32Vopc,     &detail::decodeVCmpLeI32Vopc,
-    &detail::decodeVCmpGtI32Vopc,     &detail::decodeVCmpNeI32Vopc,
-    &detail::decodeVCmpGeI32Vopc,     &detail::decodeVCmpTI32Vopc,
-    &detail::decodeVCmpClassF32Vopc,  &detail::decodeVCmpLtI16Vopc,
-    &detail::decodeVCmpEqI16Vopc,     &detail::decodeVCmpLeI16Vopc,
-    &detail::decodeVCmpGtI16Vopc,     &detail::decodeVCmpNeI16Vopc,
-    &detail::decodeVCmpGeI16Vopc,     &detail::decodeVCmpClassF16Vopc,
-    &detail::decodeVCmpxFI32Vopc,     &detail::decodeVCmpxLtI32Vopc,
-    &detail::decodeVCmpxEqI32Vopc,    &detail::decodeVCmpxLeI32Vopc,
-    &detail::decodeVCmpxGtI32Vopc,    &detail::decodeVCmpxNeI32Vopc,
-    &detail::decodeVCmpxGeI32Vopc,    &detail::decodeVCmpxTI32Vopc,
-    &detail::decodeVCmpxClassF32Vopc, &detail::decodeVCmpxLtI16Vopc,
-    &detail::decodeVCmpxEqI16Vopc,    &detail::decodeVCmpxLeI16Vopc,
-    &detail::decodeVCmpxGtI16Vopc,    &detail::decodeVCmpxNeI16Vopc,
-    &detail::decodeVCmpxGeI16Vopc,    &detail::decodeVCmpxClassF16Vopc,
-    &detail::decodeVCmpFI64Vopc,      &detail::decodeVCmpLtI64Vopc,
-    &detail::decodeVCmpEqI64Vopc,     &detail::decodeVCmpLeI64Vopc,
-    &detail::decodeVCmpGtI64Vopc,     &detail::decodeVCmpNeI64Vopc,
-    &detail::decodeVCmpGeI64Vopc,     &detail::decodeVCmpTI64Vopc,
-    &detail::decodeVCmpClassF64Vopc,  &detail::decodeVCmpLtU16Vopc,
-    &detail::decodeVCmpEqU16Vopc,     &detail::decodeVCmpLeU16Vopc,
-    &detail::decodeVCmpGtU16Vopc,     &detail::decodeVCmpNeU16Vopc,
-    &detail::decodeVCmpGeU16Vopc,     &DecoderImpl::decodeInvalid,
-    &detail::decodeVCmpxFI64Vopc,     &detail::decodeVCmpxLtI64Vopc,
-    &detail::decodeVCmpxEqI64Vopc,    &detail::decodeVCmpxLeI64Vopc,
-    &detail::decodeVCmpxGtI64Vopc,    &detail::decodeVCmpxNeI64Vopc,
-    &detail::decodeVCmpxGeI64Vopc,    &detail::decodeVCmpxTI64Vopc,
-    &detail::decodeVCmpxClassF64Vopc, &detail::decodeVCmpxLtU16Vopc,
-    &detail::decodeVCmpxEqU16Vopc,    &detail::decodeVCmpxLeU16Vopc,
-    &detail::decodeVCmpxGtU16Vopc,    &detail::decodeVCmpxNeU16Vopc,
-    &detail::decodeVCmpxGeU16Vopc,    &DecoderImpl::decodeInvalid,
-    &detail::decodeVCmpFU32Vopc,      &detail::decodeVCmpLtU32Vopc,
-    &detail::decodeVCmpEqU32Vopc,     &detail::decodeVCmpLeU32Vopc,
-    &detail::decodeVCmpGtU32Vopc,     &detail::decodeVCmpNeU32Vopc,
-    &detail::decodeVCmpGeU32Vopc,     &detail::decodeVCmpTU32Vopc,
-    &detail::decodeVCmpFF16Vopc,      &detail::decodeVCmpLtF16Vopc,
-    &detail::decodeVCmpEqF16Vopc,     &detail::decodeVCmpLeF16Vopc,
-    &detail::decodeVCmpGtF16Vopc,     &detail::decodeVCmpLgF16Vopc,
-    &detail::decodeVCmpGeF16Vopc,     &detail::decodeVCmpOF16Vopc,
-    &detail::decodeVCmpxFU32Vopc,     &detail::decodeVCmpxLtU32Vopc,
-    &detail::decodeVCmpxEqU32Vopc,    &detail::decodeVCmpxLeU32Vopc,
-    &detail::decodeVCmpxGtU32Vopc,    &detail::decodeVCmpxNeU32Vopc,
-    &detail::decodeVCmpxGeU32Vopc,    &detail::decodeVCmpxTU32Vopc,
-    &detail::decodeVCmpxFF16Vopc,     &detail::decodeVCmpxLtF16Vopc,
-    &detail::decodeVCmpxEqF16Vopc,    &detail::decodeVCmpxLeF16Vopc,
-    &detail::decodeVCmpxGtF16Vopc,    &detail::decodeVCmpxLgF16Vopc,
-    &detail::decodeVCmpxGeF16Vopc,    &detail::decodeVCmpxOF16Vopc,
-    &detail::decodeVCmpFU64Vopc,      &detail::decodeVCmpLtU64Vopc,
-    &detail::decodeVCmpEqU64Vopc,     &detail::decodeVCmpLeU64Vopc,
-    &detail::decodeVCmpGtU64Vopc,     &detail::decodeVCmpNeU64Vopc,
-    &detail::decodeVCmpGeU64Vopc,     &detail::decodeVCmpTU64Vopc,
-    &detail::decodeVCmpUF16Vopc,      &detail::decodeVCmpNgeF16Vopc,
-    &detail::decodeVCmpNlgF16Vopc,    &detail::decodeVCmpNgtF16Vopc,
-    &detail::decodeVCmpNleF16Vopc,    &detail::decodeVCmpNeqF16Vopc,
-    &detail::decodeVCmpNltF16Vopc,    &detail::decodeVCmpTruF16Vopc,
-    &detail::decodeVCmpxFU64Vopc,     &detail::decodeVCmpxLtU64Vopc,
-    &detail::decodeVCmpxEqU64Vopc,    &detail::decodeVCmpxLeU64Vopc,
-    &detail::decodeVCmpxGtU64Vopc,    &detail::decodeVCmpxNeU64Vopc,
-    &detail::decodeVCmpxGeU64Vopc,    &detail::decodeVCmpxTU64Vopc,
-    &detail::decodeVCmpxUF16Vopc,     &detail::decodeVCmpxNgeF16Vopc,
-    &detail::decodeVCmpxNlgF16Vopc,   &detail::decodeVCmpxNgtF16Vopc,
-    &detail::decodeVCmpxNleF16Vopc,   &detail::decodeVCmpxNeqF16Vopc,
-    &detail::decodeVCmpxNltF16Vopc,   &detail::decodeVCmpxTruF16Vopc,
+  RJ_BEGIN_DECODE_TABLE(sub_decode_sop1)
+  RJ_DECODE_RUN(0, 3, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(3, 1, &detail::decodeSMovB32Sop1);
+  RJ_DECODE_RUN(4, 1, &detail::decodeSMovB64Sop1);
+  RJ_DECODE_RUN(5, 1, &detail::decodeSCmovB32Sop1);
+  RJ_DECODE_RUN(6, 1, &detail::decodeSCmovB64Sop1);
+  RJ_DECODE_RUN(7, 1, &detail::decodeSNotB32Sop1);
+  RJ_DECODE_RUN(8, 1, &detail::decodeSNotB64Sop1);
+  RJ_DECODE_RUN(9, 1, &detail::decodeSWqmB32Sop1);
+  RJ_DECODE_RUN(10, 1, &detail::decodeSWqmB64Sop1);
+  RJ_DECODE_RUN(11, 1, &detail::decodeSBrevB32Sop1);
+  RJ_DECODE_RUN(12, 1, &detail::decodeSBrevB64Sop1);
+  RJ_DECODE_RUN(13, 1, &detail::decodeSBcnt0I32B32Sop1);
+  RJ_DECODE_RUN(14, 1, &detail::decodeSBcnt0I32B64Sop1);
+  RJ_DECODE_RUN(15, 1, &detail::decodeSBcnt1I32B32Sop1);
+  RJ_DECODE_RUN(16, 1, &detail::decodeSBcnt1I32B64Sop1);
+  RJ_DECODE_RUN(17, 1, &detail::decodeSFf0I32B32Sop1);
+  RJ_DECODE_RUN(18, 1, &detail::decodeSFf0I32B64Sop1);
+  RJ_DECODE_RUN(19, 1, &detail::decodeSFf1I32B32Sop1);
+  RJ_DECODE_RUN(20, 1, &detail::decodeSFf1I32B64Sop1);
+  RJ_DECODE_RUN(21, 1, &detail::decodeSFlbitI32B32Sop1);
+  RJ_DECODE_RUN(22, 1, &detail::decodeSFlbitI32B64Sop1);
+  RJ_DECODE_RUN(23, 1, &detail::decodeSFlbitI32Sop1);
+  RJ_DECODE_RUN(24, 1, &detail::decodeSFlbitI32I64Sop1);
+  RJ_DECODE_RUN(25, 1, &detail::decodeSSextI32I8Sop1);
+  RJ_DECODE_RUN(26, 1, &detail::decodeSSextI32I16Sop1);
+  RJ_DECODE_RUN(27, 1, &detail::decodeSBitset0B32Sop1);
+  RJ_DECODE_RUN(28, 1, &detail::decodeSBitset0B64Sop1);
+  RJ_DECODE_RUN(29, 1, &detail::decodeSBitset1B32Sop1);
+  RJ_DECODE_RUN(30, 1, &detail::decodeSBitset1B64Sop1);
+  RJ_DECODE_RUN(31, 1, &detail::decodeSGetpcB64Sop1);
+  RJ_DECODE_RUN(32, 1, &detail::decodeSSetpcB64Sop1);
+  RJ_DECODE_RUN(33, 1, &detail::decodeSSwappcB64Sop1);
+  RJ_DECODE_RUN(34, 1, &detail::decodeSRfeB64Sop1);
+  RJ_DECODE_RUN(35, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(36, 1, &detail::decodeSAndSaveexecB64Sop1);
+  RJ_DECODE_RUN(37, 1, &detail::decodeSOrSaveexecB64Sop1);
+  RJ_DECODE_RUN(38, 1, &detail::decodeSXorSaveexecB64Sop1);
+  RJ_DECODE_RUN(39, 1, &detail::decodeSAndn2SaveexecB64Sop1);
+  RJ_DECODE_RUN(40, 1, &detail::decodeSOrn2SaveexecB64Sop1);
+  RJ_DECODE_RUN(41, 1, &detail::decodeSNandSaveexecB64Sop1);
+  RJ_DECODE_RUN(42, 1, &detail::decodeSNorSaveexecB64Sop1);
+  RJ_DECODE_RUN(43, 1, &detail::decodeSXnorSaveexecB64Sop1);
+  RJ_DECODE_RUN(44, 1, &detail::decodeSQuadmaskB32Sop1);
+  RJ_DECODE_RUN(45, 1, &detail::decodeSQuadmaskB64Sop1);
+  RJ_DECODE_RUN(46, 1, &detail::decodeSMovrelsB32Sop1);
+  RJ_DECODE_RUN(47, 1, &detail::decodeSMovrelsB64Sop1);
+  RJ_DECODE_RUN(48, 1, &detail::decodeSMovreldB32Sop1);
+  RJ_DECODE_RUN(49, 1, &detail::decodeSMovreldB64Sop1);
+  RJ_DECODE_RUN(50, 2, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(52, 1, &detail::decodeSAbsI32Sop1);
+  RJ_DECODE_RUN(53, 2, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(55, 1, &detail::decodeSAndn1SaveexecB64Sop1);
+  RJ_DECODE_RUN(56, 1, &detail::decodeSOrn1SaveexecB64Sop1);
+  RJ_DECODE_RUN(57, 1, &detail::decodeSAndn1WrexecB64Sop1);
+  RJ_DECODE_RUN(58, 1, &detail::decodeSAndn2WrexecB64Sop1);
+  RJ_DECODE_RUN(59, 1, &detail::decodeSBitreplicateB64B32Sop1);
+  RJ_DECODE_RUN(60, 1, &detail::decodeSAndSaveexecB32Sop1);
+  RJ_DECODE_RUN(61, 1, &detail::decodeSOrSaveexecB32Sop1);
+  RJ_DECODE_RUN(62, 1, &detail::decodeSXorSaveexecB32Sop1);
+  RJ_DECODE_RUN(63, 1, &detail::decodeSAndn2SaveexecB32Sop1);
+  RJ_DECODE_RUN(64, 1, &detail::decodeSOrn2SaveexecB32Sop1);
+  RJ_DECODE_RUN(65, 1, &detail::decodeSNandSaveexecB32Sop1);
+  RJ_DECODE_RUN(66, 1, &detail::decodeSNorSaveexecB32Sop1);
+  RJ_DECODE_RUN(67, 1, &detail::decodeSXnorSaveexecB32Sop1);
+  RJ_DECODE_RUN(68, 1, &detail::decodeSAndn1SaveexecB32Sop1);
+  RJ_DECODE_RUN(69, 1, &detail::decodeSOrn1SaveexecB32Sop1);
+  RJ_DECODE_RUN(70, 1, &detail::decodeSAndn1WrexecB32Sop1);
+  RJ_DECODE_RUN(71, 1, &detail::decodeSAndn2WrexecB32Sop1);
+  RJ_DECODE_RUN(72, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(73, 1, &detail::decodeSMovrelsd2B32Sop1);
+  RJ_DECODE_RUN(74, 182, &DecoderImpl::decodeInvalid);
+  RJ_END_DECODE_TABLE()
 
-};
+  RJ_BEGIN_DECODE_TABLE(sub_decode_sopc)
+  RJ_DECODE_RUN(0, 1, &detail::decodeSCmpEqI32Sopc);
+  RJ_DECODE_RUN(1, 1, &detail::decodeSCmpLgI32Sopc);
+  RJ_DECODE_RUN(2, 1, &detail::decodeSCmpGtI32Sopc);
+  RJ_DECODE_RUN(3, 1, &detail::decodeSCmpGeI32Sopc);
+  RJ_DECODE_RUN(4, 1, &detail::decodeSCmpLtI32Sopc);
+  RJ_DECODE_RUN(5, 1, &detail::decodeSCmpLeI32Sopc);
+  RJ_DECODE_RUN(6, 1, &detail::decodeSCmpEqU32Sopc);
+  RJ_DECODE_RUN(7, 1, &detail::decodeSCmpLgU32Sopc);
+  RJ_DECODE_RUN(8, 1, &detail::decodeSCmpGtU32Sopc);
+  RJ_DECODE_RUN(9, 1, &detail::decodeSCmpGeU32Sopc);
+  RJ_DECODE_RUN(10, 1, &detail::decodeSCmpLtU32Sopc);
+  RJ_DECODE_RUN(11, 1, &detail::decodeSCmpLeU32Sopc);
+  RJ_DECODE_RUN(12, 1, &detail::decodeSBitcmp0B32Sopc);
+  RJ_DECODE_RUN(13, 1, &detail::decodeSBitcmp1B32Sopc);
+  RJ_DECODE_RUN(14, 1, &detail::decodeSBitcmp0B64Sopc);
+  RJ_DECODE_RUN(15, 1, &detail::decodeSBitcmp1B64Sopc);
+  RJ_DECODE_RUN(16, 2, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(18, 1, &detail::decodeSCmpEqU64Sopc);
+  RJ_DECODE_RUN(19, 1, &detail::decodeSCmpLgU64Sopc);
+  RJ_DECODE_RUN(20, 108, &DecoderImpl::decodeInvalid);
+  RJ_END_DECODE_TABLE()
 
-const std::array<DecoderImpl::DecodeFunc, 256> DecoderImpl::sub_decode_vop1 = {
+  RJ_BEGIN_DECODE_TABLE(sub_decode_sopp)
+  RJ_DECODE_RUN(0, 1, &detail::decodeSNopSopp);
+  RJ_DECODE_RUN(1, 1, &detail::decodeSEndpgmSopp);
+  RJ_DECODE_RUN(2, 1, &detail::decodeSBranchSopp);
+  RJ_DECODE_RUN(3, 1, &detail::decodeSWakeupSopp);
+  RJ_DECODE_RUN(4, 1, &detail::decodeSCbranchScc0Sopp);
+  RJ_DECODE_RUN(5, 1, &detail::decodeSCbranchScc1Sopp);
+  RJ_DECODE_RUN(6, 1, &detail::decodeSCbranchVcczSopp);
+  RJ_DECODE_RUN(7, 1, &detail::decodeSCbranchVccnzSopp);
+  RJ_DECODE_RUN(8, 1, &detail::decodeSCbranchExeczSopp);
+  RJ_DECODE_RUN(9, 1, &detail::decodeSCbranchExecnzSopp);
+  RJ_DECODE_RUN(10, 1, &detail::decodeSBarrierSopp);
+  RJ_DECODE_RUN(11, 1, &detail::decodeSSetkillSopp);
+  RJ_DECODE_RUN(12, 1, &detail::decodeSWaitcntSopp);
+  RJ_DECODE_RUN(13, 1, &detail::decodeSSethaltSopp);
+  RJ_DECODE_RUN(14, 1, &detail::decodeSSleepSopp);
+  RJ_DECODE_RUN(15, 1, &detail::decodeSSetprioSopp);
+  RJ_DECODE_RUN(16, 1, &detail::decodeSSendmsgSopp);
+  RJ_DECODE_RUN(17, 1, &detail::decodeSSendmsghaltSopp);
+  RJ_DECODE_RUN(18, 1, &detail::decodeSTrapSopp);
+  RJ_DECODE_RUN(19, 1, &detail::decodeSIcacheInvSopp);
+  RJ_DECODE_RUN(20, 1, &detail::decodeSIncperflevelSopp);
+  RJ_DECODE_RUN(21, 1, &detail::decodeSDecperflevelSopp);
+  RJ_DECODE_RUN(22, 1, &detail::decodeSTtracedataSopp);
+  RJ_DECODE_RUN(23, 1, &detail::decodeSCbranchCdbgsysSopp);
+  RJ_DECODE_RUN(24, 1, &detail::decodeSCbranchCdbguserSopp);
+  RJ_DECODE_RUN(25, 1, &detail::decodeSCbranchCdbgsysOrUserSopp);
+  RJ_DECODE_RUN(26, 1, &detail::decodeSCbranchCdbgsysAndUserSopp);
+  RJ_DECODE_RUN(27, 1, &detail::decodeSEndpgmSavedSopp);
+  RJ_DECODE_RUN(28, 2, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(30, 1, &detail::decodeSEndpgmOrderedPsDoneSopp);
+  RJ_DECODE_RUN(31, 1, &detail::decodeSCodeEndSopp);
+  RJ_DECODE_RUN(32, 1, &detail::decodeSInstPrefetchSopp);
+  RJ_DECODE_RUN(33, 1, &detail::decodeSClauseSopp);
+  RJ_DECODE_RUN(34, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(35, 1, &detail::decodeSWaitcntDepctrSopp);
+  RJ_DECODE_RUN(36, 1, &detail::decodeSRoundModeSopp);
+  RJ_DECODE_RUN(37, 1, &detail::decodeSDenormModeSopp);
+  RJ_DECODE_RUN(38, 2, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(40, 1, &detail::decodeSTtracedataImmSopp);
+  RJ_DECODE_RUN(41, 87, &DecoderImpl::decodeInvalid);
+  RJ_END_DECODE_TABLE()
 
-    &detail::decodeVNopVop1,
-    &detail::decodeVMovB32Vop1,
-    &detail::decodeVReadfirstlaneB32Vop1,
-    &detail::decodeVCvtI32F64Vop1,
-    &detail::decodeVCvtF64I32Vop1,
-    &detail::decodeVCvtF32I32Vop1,
-    &detail::decodeVCvtF32U32Vop1,
-    &detail::decodeVCvtU32F32Vop1,
-    &detail::decodeVCvtI32F32Vop1,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVCvtF16F32Vop1,
-    &detail::decodeVCvtF32F16Vop1,
-    &detail::decodeVCvtRpiI32F32Vop1,
-    &detail::decodeVCvtFlrI32F32Vop1,
-    &detail::decodeVCvtOffF32I4Vop1,
-    &detail::decodeVCvtF32F64Vop1,
-    &detail::decodeVCvtF64F32Vop1,
-    &detail::decodeVCvtF32Ubyte0Vop1,
-    &detail::decodeVCvtF32Ubyte1Vop1,
-    &detail::decodeVCvtF32Ubyte2Vop1,
-    &detail::decodeVCvtF32Ubyte3Vop1,
-    &detail::decodeVCvtU32F64Vop1,
-    &detail::decodeVCvtF64U32Vop1,
-    &detail::decodeVTruncF64Vop1,
-    &detail::decodeVCeilF64Vop1,
-    &detail::decodeVRndneF64Vop1,
-    &detail::decodeVFloorF64Vop1,
-    &detail::decodeVPipeflushVop1,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVFractF32Vop1,
-    &detail::decodeVTruncF32Vop1,
-    &detail::decodeVCeilF32Vop1,
-    &detail::decodeVRndneF32Vop1,
-    &detail::decodeVFloorF32Vop1,
-    &detail::decodeVExpF32Vop1,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVLogF32Vop1,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVRcpF32Vop1,
-    &detail::decodeVRcpIflagF32Vop1,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVRsqF32Vop1,
-    &detail::decodeVRcpF64Vop1,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVRsqF64Vop1,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVSqrtF32Vop1,
-    &detail::decodeVSqrtF64Vop1,
-    &detail::decodeVSinF32Vop1,
-    &detail::decodeVCosF32Vop1,
-    &detail::decodeVNotB32Vop1,
-    &detail::decodeVBfrevB32Vop1,
-    &detail::decodeVFfbhU32Vop1,
-    &detail::decodeVFfblB32Vop1,
-    &detail::decodeVFfbhI32Vop1,
-    &detail::decodeVFrexpExpI32F64Vop1,
-    &detail::decodeVFrexpMantF64Vop1,
-    &detail::decodeVFractF64Vop1,
-    &detail::decodeVFrexpExpI32F32Vop1,
-    &detail::decodeVFrexpMantF32Vop1,
-    &detail::decodeVClrexcpVop1,
-    &detail::decodeVMovreldB32Vop1,
-    &detail::decodeVMovrelsB32Vop1,
-    &detail::decodeVMovrelsdB32Vop1,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVMovrelsd2B32Vop1,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVCvtF16U16Vop1,
-    &detail::decodeVCvtF16I16Vop1,
-    &detail::decodeVCvtU16F16Vop1,
-    &detail::decodeVCvtI16F16Vop1,
-    &detail::decodeVRcpF16Vop1,
-    &detail::decodeVSqrtF16Vop1,
-    &detail::decodeVRsqF16Vop1,
-    &detail::decodeVLogF16Vop1,
-    &detail::decodeVExpF16Vop1,
-    &detail::decodeVFrexpMantF16Vop1,
-    &detail::decodeVFrexpExpI16F16Vop1,
-    &detail::decodeVFloorF16Vop1,
-    &detail::decodeVCeilF16Vop1,
-    &detail::decodeVTruncF16Vop1,
-    &detail::decodeVRndneF16Vop1,
-    &detail::decodeVFractF16Vop1,
-    &detail::decodeVSinF16Vop1,
-    &detail::decodeVCosF16Vop1,
-    &detail::decodeVSatPkU8I16Vop1,
-    &detail::decodeVCvtNormI16F16Vop1,
-    &detail::decodeVCvtNormU16F16Vop1,
-    &detail::decodeVSwapB32Vop1,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVSwaprelB32Vop1,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
+  RJ_BEGIN_DECODE_TABLE(sub_decode_vintrp)
+  RJ_DECODE_RUN(0, 1, &detail::decodeVInterpP1F32Vintrp);
+  RJ_DECODE_RUN(1, 1, &detail::decodeVInterpP2F32Vintrp);
+  RJ_DECODE_RUN(2, 1, &detail::decodeVInterpMovF32Vintrp);
+  RJ_DECODE_RUN(3, 1, &DecoderImpl::decodeInvalid);
+  RJ_END_DECODE_TABLE()
 
-};
+  RJ_BEGIN_DECODE_TABLE(sub_decode_vop3p)
+  RJ_DECODE_RUN(0, 1, &detail::decodeVPkMadI16Vop3p);
+  RJ_DECODE_RUN(1, 1, &detail::decodeVPkMulLoU16Vop3p);
+  RJ_DECODE_RUN(2, 1, &detail::decodeVPkAddI16Vop3p);
+  RJ_DECODE_RUN(3, 1, &detail::decodeVPkSubI16Vop3p);
+  RJ_DECODE_RUN(4, 1, &detail::decodeVPkLshlrevB16Vop3p);
+  RJ_DECODE_RUN(5, 1, &detail::decodeVPkLshrrevB16Vop3p);
+  RJ_DECODE_RUN(6, 1, &detail::decodeVPkAshrrevI16Vop3p);
+  RJ_DECODE_RUN(7, 1, &detail::decodeVPkMaxI16Vop3p);
+  RJ_DECODE_RUN(8, 1, &detail::decodeVPkMinI16Vop3p);
+  RJ_DECODE_RUN(9, 1, &detail::decodeVPkMadU16Vop3p);
+  RJ_DECODE_RUN(10, 1, &detail::decodeVPkAddU16Vop3p);
+  RJ_DECODE_RUN(11, 1, &detail::decodeVPkSubU16Vop3p);
+  RJ_DECODE_RUN(12, 1, &detail::decodeVPkMaxU16Vop3p);
+  RJ_DECODE_RUN(13, 1, &detail::decodeVPkMinU16Vop3p);
+  RJ_DECODE_RUN(14, 1, &detail::decodeVPkFmaF16Vop3p);
+  RJ_DECODE_RUN(15, 1, &detail::decodeVPkAddF16Vop3p);
+  RJ_DECODE_RUN(16, 1, &detail::decodeVPkMulF16Vop3p);
+  RJ_DECODE_RUN(17, 1, &detail::decodeVPkMinF16Vop3p);
+  RJ_DECODE_RUN(18, 1, &detail::decodeVPkMaxF16Vop3p);
+  RJ_DECODE_RUN(19, 1, &detail::decodeVDot2F32F16Vop3p);
+  RJ_DECODE_RUN(20, 1, &detail::decodeVDot2I32I16Vop3p);
+  RJ_DECODE_RUN(21, 1, &detail::decodeVDot2U32U16Vop3p);
+  RJ_DECODE_RUN(22, 1, &detail::decodeVDot4I32I8Vop3p);
+  RJ_DECODE_RUN(23, 1, &detail::decodeVDot4U32U8Vop3p);
+  RJ_DECODE_RUN(24, 1, &detail::decodeVDot8I32I4Vop3p);
+  RJ_DECODE_RUN(25, 1, &detail::decodeVDot8U32U4Vop3p);
+  RJ_DECODE_RUN(26, 6, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(32, 1, &detail::decodeVFmaMixF32Vop3p);
+  RJ_DECODE_RUN(33, 1, &detail::decodeVFmaMixloF16Vop3p);
+  RJ_DECODE_RUN(34, 1, &detail::decodeVFmaMixhiF16Vop3p);
+  RJ_DECODE_RUN(35, 93, &DecoderImpl::decodeInvalid);
+  RJ_END_DECODE_TABLE()
 
-const std::array<DecoderImpl::DecodeFunc, 256> DecoderImpl::sub_decode_sop1 = {
+  RJ_BEGIN_DECODE_TABLE(sub_decode_vop3)
+  RJ_DECODE_RUN(0, 1, &detail::decodeVCmpFF32Vop3);
+  RJ_DECODE_RUN(1, 1, &detail::decodeVCmpLtF32Vop3);
+  RJ_DECODE_RUN(2, 1, &detail::decodeVCmpEqF32Vop3);
+  RJ_DECODE_RUN(3, 1, &detail::decodeVCmpLeF32Vop3);
+  RJ_DECODE_RUN(4, 1, &detail::decodeVCmpGtF32Vop3);
+  RJ_DECODE_RUN(5, 1, &detail::decodeVCmpLgF32Vop3);
+  RJ_DECODE_RUN(6, 1, &detail::decodeVCmpGeF32Vop3);
+  RJ_DECODE_RUN(7, 1, &detail::decodeVCmpOF32Vop3);
+  RJ_DECODE_RUN(8, 1, &detail::decodeVCmpUF32Vop3);
+  RJ_DECODE_RUN(9, 1, &detail::decodeVCmpNgeF32Vop3);
+  RJ_DECODE_RUN(10, 1, &detail::decodeVCmpNlgF32Vop3);
+  RJ_DECODE_RUN(11, 1, &detail::decodeVCmpNgtF32Vop3);
+  RJ_DECODE_RUN(12, 1, &detail::decodeVCmpNleF32Vop3);
+  RJ_DECODE_RUN(13, 1, &detail::decodeVCmpNeqF32Vop3);
+  RJ_DECODE_RUN(14, 1, &detail::decodeVCmpNltF32Vop3);
+  RJ_DECODE_RUN(15, 1, &detail::decodeVCmpTruF32Vop3);
+  RJ_DECODE_RUN(16, 1, &detail::decodeVCmpxFF32Vop3);
+  RJ_DECODE_RUN(17, 1, &detail::decodeVCmpxLtF32Vop3);
+  RJ_DECODE_RUN(18, 1, &detail::decodeVCmpxEqF32Vop3);
+  RJ_DECODE_RUN(19, 1, &detail::decodeVCmpxLeF32Vop3);
+  RJ_DECODE_RUN(20, 1, &detail::decodeVCmpxGtF32Vop3);
+  RJ_DECODE_RUN(21, 1, &detail::decodeVCmpxLgF32Vop3);
+  RJ_DECODE_RUN(22, 1, &detail::decodeVCmpxGeF32Vop3);
+  RJ_DECODE_RUN(23, 1, &detail::decodeVCmpxOF32Vop3);
+  RJ_DECODE_RUN(24, 1, &detail::decodeVCmpxUF32Vop3);
+  RJ_DECODE_RUN(25, 1, &detail::decodeVCmpxNgeF32Vop3);
+  RJ_DECODE_RUN(26, 1, &detail::decodeVCmpxNlgF32Vop3);
+  RJ_DECODE_RUN(27, 1, &detail::decodeVCmpxNgtF32Vop3);
+  RJ_DECODE_RUN(28, 1, &detail::decodeVCmpxNleF32Vop3);
+  RJ_DECODE_RUN(29, 1, &detail::decodeVCmpxNeqF32Vop3);
+  RJ_DECODE_RUN(30, 1, &detail::decodeVCmpxNltF32Vop3);
+  RJ_DECODE_RUN(31, 1, &detail::decodeVCmpxTruF32Vop3);
+  RJ_DECODE_RUN(32, 1, &detail::decodeVCmpFF64Vop3);
+  RJ_DECODE_RUN(33, 1, &detail::decodeVCmpLtF64Vop3);
+  RJ_DECODE_RUN(34, 1, &detail::decodeVCmpEqF64Vop3);
+  RJ_DECODE_RUN(35, 1, &detail::decodeVCmpLeF64Vop3);
+  RJ_DECODE_RUN(36, 1, &detail::decodeVCmpGtF64Vop3);
+  RJ_DECODE_RUN(37, 1, &detail::decodeVCmpLgF64Vop3);
+  RJ_DECODE_RUN(38, 1, &detail::decodeVCmpGeF64Vop3);
+  RJ_DECODE_RUN(39, 1, &detail::decodeVCmpOF64Vop3);
+  RJ_DECODE_RUN(40, 1, &detail::decodeVCmpUF64Vop3);
+  RJ_DECODE_RUN(41, 1, &detail::decodeVCmpNgeF64Vop3);
+  RJ_DECODE_RUN(42, 1, &detail::decodeVCmpNlgF64Vop3);
+  RJ_DECODE_RUN(43, 1, &detail::decodeVCmpNgtF64Vop3);
+  RJ_DECODE_RUN(44, 1, &detail::decodeVCmpNleF64Vop3);
+  RJ_DECODE_RUN(45, 1, &detail::decodeVCmpNeqF64Vop3);
+  RJ_DECODE_RUN(46, 1, &detail::decodeVCmpNltF64Vop3);
+  RJ_DECODE_RUN(47, 1, &detail::decodeVCmpTruF64Vop3);
+  RJ_DECODE_RUN(48, 1, &detail::decodeVCmpxFF64Vop3);
+  RJ_DECODE_RUN(49, 1, &detail::decodeVCmpxLtF64Vop3);
+  RJ_DECODE_RUN(50, 1, &detail::decodeVCmpxEqF64Vop3);
+  RJ_DECODE_RUN(51, 1, &detail::decodeVCmpxLeF64Vop3);
+  RJ_DECODE_RUN(52, 1, &detail::decodeVCmpxGtF64Vop3);
+  RJ_DECODE_RUN(53, 1, &detail::decodeVCmpxLgF64Vop3);
+  RJ_DECODE_RUN(54, 1, &detail::decodeVCmpxGeF64Vop3);
+  RJ_DECODE_RUN(55, 1, &detail::decodeVCmpxOF64Vop3);
+  RJ_DECODE_RUN(56, 1, &detail::decodeVCmpxUF64Vop3);
+  RJ_DECODE_RUN(57, 1, &detail::decodeVCmpxNgeF64Vop3);
+  RJ_DECODE_RUN(58, 1, &detail::decodeVCmpxNlgF64Vop3);
+  RJ_DECODE_RUN(59, 1, &detail::decodeVCmpxNgtF64Vop3);
+  RJ_DECODE_RUN(60, 1, &detail::decodeVCmpxNleF64Vop3);
+  RJ_DECODE_RUN(61, 1, &detail::decodeVCmpxNeqF64Vop3);
+  RJ_DECODE_RUN(62, 1, &detail::decodeVCmpxNltF64Vop3);
+  RJ_DECODE_RUN(63, 1, &detail::decodeVCmpxTruF64Vop3);
+  RJ_DECODE_RUN(64, 64, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(128, 1, &detail::decodeVCmpFI32Vop3);
+  RJ_DECODE_RUN(129, 1, &detail::decodeVCmpLtI32Vop3);
+  RJ_DECODE_RUN(130, 1, &detail::decodeVCmpEqI32Vop3);
+  RJ_DECODE_RUN(131, 1, &detail::decodeVCmpLeI32Vop3);
+  RJ_DECODE_RUN(132, 1, &detail::decodeVCmpGtI32Vop3);
+  RJ_DECODE_RUN(133, 1, &detail::decodeVCmpNeI32Vop3);
+  RJ_DECODE_RUN(134, 1, &detail::decodeVCmpGeI32Vop3);
+  RJ_DECODE_RUN(135, 1, &detail::decodeVCmpTI32Vop3);
+  RJ_DECODE_RUN(136, 1, &detail::decodeVCmpClassF32Vop3);
+  RJ_DECODE_RUN(137, 1, &detail::decodeVCmpLtI16Vop3);
+  RJ_DECODE_RUN(138, 1, &detail::decodeVCmpEqI16Vop3);
+  RJ_DECODE_RUN(139, 1, &detail::decodeVCmpLeI16Vop3);
+  RJ_DECODE_RUN(140, 1, &detail::decodeVCmpGtI16Vop3);
+  RJ_DECODE_RUN(141, 1, &detail::decodeVCmpNeI16Vop3);
+  RJ_DECODE_RUN(142, 1, &detail::decodeVCmpGeI16Vop3);
+  RJ_DECODE_RUN(143, 1, &detail::decodeVCmpClassF16Vop3);
+  RJ_DECODE_RUN(144, 1, &detail::decodeVCmpxFI32Vop3);
+  RJ_DECODE_RUN(145, 1, &detail::decodeVCmpxLtI32Vop3);
+  RJ_DECODE_RUN(146, 1, &detail::decodeVCmpxEqI32Vop3);
+  RJ_DECODE_RUN(147, 1, &detail::decodeVCmpxLeI32Vop3);
+  RJ_DECODE_RUN(148, 1, &detail::decodeVCmpxGtI32Vop3);
+  RJ_DECODE_RUN(149, 1, &detail::decodeVCmpxNeI32Vop3);
+  RJ_DECODE_RUN(150, 1, &detail::decodeVCmpxGeI32Vop3);
+  RJ_DECODE_RUN(151, 1, &detail::decodeVCmpxTI32Vop3);
+  RJ_DECODE_RUN(152, 1, &detail::decodeVCmpxClassF32Vop3);
+  RJ_DECODE_RUN(153, 1, &detail::decodeVCmpxLtI16Vop3);
+  RJ_DECODE_RUN(154, 1, &detail::decodeVCmpxEqI16Vop3);
+  RJ_DECODE_RUN(155, 1, &detail::decodeVCmpxLeI16Vop3);
+  RJ_DECODE_RUN(156, 1, &detail::decodeVCmpxGtI16Vop3);
+  RJ_DECODE_RUN(157, 1, &detail::decodeVCmpxNeI16Vop3);
+  RJ_DECODE_RUN(158, 1, &detail::decodeVCmpxGeI16Vop3);
+  RJ_DECODE_RUN(159, 1, &detail::decodeVCmpxClassF16Vop3);
+  RJ_DECODE_RUN(160, 1, &detail::decodeVCmpFI64Vop3);
+  RJ_DECODE_RUN(161, 1, &detail::decodeVCmpLtI64Vop3);
+  RJ_DECODE_RUN(162, 1, &detail::decodeVCmpEqI64Vop3);
+  RJ_DECODE_RUN(163, 1, &detail::decodeVCmpLeI64Vop3);
+  RJ_DECODE_RUN(164, 1, &detail::decodeVCmpGtI64Vop3);
+  RJ_DECODE_RUN(165, 1, &detail::decodeVCmpNeI64Vop3);
+  RJ_DECODE_RUN(166, 1, &detail::decodeVCmpGeI64Vop3);
+  RJ_DECODE_RUN(167, 1, &detail::decodeVCmpTI64Vop3);
+  RJ_DECODE_RUN(168, 1, &detail::decodeVCmpClassF64Vop3);
+  RJ_DECODE_RUN(169, 1, &detail::decodeVCmpLtU16Vop3);
+  RJ_DECODE_RUN(170, 1, &detail::decodeVCmpEqU16Vop3);
+  RJ_DECODE_RUN(171, 1, &detail::decodeVCmpLeU16Vop3);
+  RJ_DECODE_RUN(172, 1, &detail::decodeVCmpGtU16Vop3);
+  RJ_DECODE_RUN(173, 1, &detail::decodeVCmpNeU16Vop3);
+  RJ_DECODE_RUN(174, 1, &detail::decodeVCmpGeU16Vop3);
+  RJ_DECODE_RUN(175, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(176, 1, &detail::decodeVCmpxFI64Vop3);
+  RJ_DECODE_RUN(177, 1, &detail::decodeVCmpxLtI64Vop3);
+  RJ_DECODE_RUN(178, 1, &detail::decodeVCmpxEqI64Vop3);
+  RJ_DECODE_RUN(179, 1, &detail::decodeVCmpxLeI64Vop3);
+  RJ_DECODE_RUN(180, 1, &detail::decodeVCmpxGtI64Vop3);
+  RJ_DECODE_RUN(181, 1, &detail::decodeVCmpxNeI64Vop3);
+  RJ_DECODE_RUN(182, 1, &detail::decodeVCmpxGeI64Vop3);
+  RJ_DECODE_RUN(183, 1, &detail::decodeVCmpxTI64Vop3);
+  RJ_DECODE_RUN(184, 1, &detail::decodeVCmpxClassF64Vop3);
+  RJ_DECODE_RUN(185, 1, &detail::decodeVCmpxLtU16Vop3);
+  RJ_DECODE_RUN(186, 1, &detail::decodeVCmpxEqU16Vop3);
+  RJ_DECODE_RUN(187, 1, &detail::decodeVCmpxLeU16Vop3);
+  RJ_DECODE_RUN(188, 1, &detail::decodeVCmpxGtU16Vop3);
+  RJ_DECODE_RUN(189, 1, &detail::decodeVCmpxNeU16Vop3);
+  RJ_DECODE_RUN(190, 1, &detail::decodeVCmpxGeU16Vop3);
+  RJ_DECODE_RUN(191, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(192, 1, &detail::decodeVCmpFU32Vop3);
+  RJ_DECODE_RUN(193, 1, &detail::decodeVCmpLtU32Vop3);
+  RJ_DECODE_RUN(194, 1, &detail::decodeVCmpEqU32Vop3);
+  RJ_DECODE_RUN(195, 1, &detail::decodeVCmpLeU32Vop3);
+  RJ_DECODE_RUN(196, 1, &detail::decodeVCmpGtU32Vop3);
+  RJ_DECODE_RUN(197, 1, &detail::decodeVCmpNeU32Vop3);
+  RJ_DECODE_RUN(198, 1, &detail::decodeVCmpGeU32Vop3);
+  RJ_DECODE_RUN(199, 1, &detail::decodeVCmpTU32Vop3);
+  RJ_DECODE_RUN(200, 1, &detail::decodeVCmpFF16Vop3);
+  RJ_DECODE_RUN(201, 1, &detail::decodeVCmpLtF16Vop3);
+  RJ_DECODE_RUN(202, 1, &detail::decodeVCmpEqF16Vop3);
+  RJ_DECODE_RUN(203, 1, &detail::decodeVCmpLeF16Vop3);
+  RJ_DECODE_RUN(204, 1, &detail::decodeVCmpGtF16Vop3);
+  RJ_DECODE_RUN(205, 1, &detail::decodeVCmpLgF16Vop3);
+  RJ_DECODE_RUN(206, 1, &detail::decodeVCmpGeF16Vop3);
+  RJ_DECODE_RUN(207, 1, &detail::decodeVCmpOF16Vop3);
+  RJ_DECODE_RUN(208, 1, &detail::decodeVCmpxFU32Vop3);
+  RJ_DECODE_RUN(209, 1, &detail::decodeVCmpxLtU32Vop3);
+  RJ_DECODE_RUN(210, 1, &detail::decodeVCmpxEqU32Vop3);
+  RJ_DECODE_RUN(211, 1, &detail::decodeVCmpxLeU32Vop3);
+  RJ_DECODE_RUN(212, 1, &detail::decodeVCmpxGtU32Vop3);
+  RJ_DECODE_RUN(213, 1, &detail::decodeVCmpxNeU32Vop3);
+  RJ_DECODE_RUN(214, 1, &detail::decodeVCmpxGeU32Vop3);
+  RJ_DECODE_RUN(215, 1, &detail::decodeVCmpxTU32Vop3);
+  RJ_DECODE_RUN(216, 1, &detail::decodeVCmpxFF16Vop3);
+  RJ_DECODE_RUN(217, 1, &detail::decodeVCmpxLtF16Vop3);
+  RJ_DECODE_RUN(218, 1, &detail::decodeVCmpxEqF16Vop3);
+  RJ_DECODE_RUN(219, 1, &detail::decodeVCmpxLeF16Vop3);
+  RJ_DECODE_RUN(220, 1, &detail::decodeVCmpxGtF16Vop3);
+  RJ_DECODE_RUN(221, 1, &detail::decodeVCmpxLgF16Vop3);
+  RJ_DECODE_RUN(222, 1, &detail::decodeVCmpxGeF16Vop3);
+  RJ_DECODE_RUN(223, 1, &detail::decodeVCmpxOF16Vop3);
+  RJ_DECODE_RUN(224, 1, &detail::decodeVCmpFU64Vop3);
+  RJ_DECODE_RUN(225, 1, &detail::decodeVCmpLtU64Vop3);
+  RJ_DECODE_RUN(226, 1, &detail::decodeVCmpEqU64Vop3);
+  RJ_DECODE_RUN(227, 1, &detail::decodeVCmpLeU64Vop3);
+  RJ_DECODE_RUN(228, 1, &detail::decodeVCmpGtU64Vop3);
+  RJ_DECODE_RUN(229, 1, &detail::decodeVCmpNeU64Vop3);
+  RJ_DECODE_RUN(230, 1, &detail::decodeVCmpGeU64Vop3);
+  RJ_DECODE_RUN(231, 1, &detail::decodeVCmpTU64Vop3);
+  RJ_DECODE_RUN(232, 1, &detail::decodeVCmpUF16Vop3);
+  RJ_DECODE_RUN(233, 1, &detail::decodeVCmpNgeF16Vop3);
+  RJ_DECODE_RUN(234, 1, &detail::decodeVCmpNlgF16Vop3);
+  RJ_DECODE_RUN(235, 1, &detail::decodeVCmpNgtF16Vop3);
+  RJ_DECODE_RUN(236, 1, &detail::decodeVCmpNleF16Vop3);
+  RJ_DECODE_RUN(237, 1, &detail::decodeVCmpNeqF16Vop3);
+  RJ_DECODE_RUN(238, 1, &detail::decodeVCmpNltF16Vop3);
+  RJ_DECODE_RUN(239, 1, &detail::decodeVCmpTruF16Vop3);
+  RJ_DECODE_RUN(240, 1, &detail::decodeVCmpxFU64Vop3);
+  RJ_DECODE_RUN(241, 1, &detail::decodeVCmpxLtU64Vop3);
+  RJ_DECODE_RUN(242, 1, &detail::decodeVCmpxEqU64Vop3);
+  RJ_DECODE_RUN(243, 1, &detail::decodeVCmpxLeU64Vop3);
+  RJ_DECODE_RUN(244, 1, &detail::decodeVCmpxGtU64Vop3);
+  RJ_DECODE_RUN(245, 1, &detail::decodeVCmpxNeU64Vop3);
+  RJ_DECODE_RUN(246, 1, &detail::decodeVCmpxGeU64Vop3);
+  RJ_DECODE_RUN(247, 1, &detail::decodeVCmpxTU64Vop3);
+  RJ_DECODE_RUN(248, 1, &detail::decodeVCmpxUF16Vop3);
+  RJ_DECODE_RUN(249, 1, &detail::decodeVCmpxNgeF16Vop3);
+  RJ_DECODE_RUN(250, 1, &detail::decodeVCmpxNlgF16Vop3);
+  RJ_DECODE_RUN(251, 1, &detail::decodeVCmpxNgtF16Vop3);
+  RJ_DECODE_RUN(252, 1, &detail::decodeVCmpxNleF16Vop3);
+  RJ_DECODE_RUN(253, 1, &detail::decodeVCmpxNeqF16Vop3);
+  RJ_DECODE_RUN(254, 1, &detail::decodeVCmpxNltF16Vop3);
+  RJ_DECODE_RUN(255, 1, &detail::decodeVCmpxTruF16Vop3);
+  RJ_DECODE_RUN(256, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(257, 1, &detail::decodeVCndmaskB32Vop3);
+  RJ_DECODE_RUN(258, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(259, 1, &detail::decodeVAddF32Vop3);
+  RJ_DECODE_RUN(260, 1, &detail::decodeVSubF32Vop3);
+  RJ_DECODE_RUN(261, 1, &detail::decodeVSubrevF32Vop3);
+  RJ_DECODE_RUN(262, 1, &detail::decodeVFmacLegacyF32Vop3);
+  RJ_DECODE_RUN(263, 1, &detail::decodeVMulLegacyF32Vop3);
+  RJ_DECODE_RUN(264, 1, &detail::decodeVMulF32Vop3);
+  RJ_DECODE_RUN(265, 1, &detail::decodeVMulI32I24Vop3);
+  RJ_DECODE_RUN(266, 1, &detail::decodeVMulHiI32I24Vop3);
+  RJ_DECODE_RUN(267, 1, &detail::decodeVMulU32U24Vop3);
+  RJ_DECODE_RUN(268, 1, &detail::decodeVMulHiU32U24Vop3);
+  RJ_DECODE_RUN(269, 2, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(271, 1, &detail::decodeVMinF32Vop3);
+  RJ_DECODE_RUN(272, 1, &detail::decodeVMaxF32Vop3);
+  RJ_DECODE_RUN(273, 1, &detail::decodeVMinI32Vop3);
+  RJ_DECODE_RUN(274, 1, &detail::decodeVMaxI32Vop3);
+  RJ_DECODE_RUN(275, 1, &detail::decodeVMinU32Vop3);
+  RJ_DECODE_RUN(276, 1, &detail::decodeVMaxU32Vop3);
+  RJ_DECODE_RUN(277, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(278, 1, &detail::decodeVLshrrevB32Vop3);
+  RJ_DECODE_RUN(279, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(280, 1, &detail::decodeVAshrrevI32Vop3);
+  RJ_DECODE_RUN(281, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(282, 1, &detail::decodeVLshlrevB32Vop3);
+  RJ_DECODE_RUN(283, 1, &detail::decodeVAndB32Vop3);
+  RJ_DECODE_RUN(284, 1, &detail::decodeVOrB32Vop3);
+  RJ_DECODE_RUN(285, 1, &detail::decodeVXorB32Vop3);
+  RJ_DECODE_RUN(286, 1, &detail::decodeVXnorB32Vop3);
+  RJ_DECODE_RUN(287, 6, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(293, 1, &detail::decodeVAddNcU32Vop3);
+  RJ_DECODE_RUN(294, 1, &detail::decodeVSubNcU32Vop3);
+  RJ_DECODE_RUN(295, 1, &detail::decodeVSubrevNcU32Vop3);
+  RJ_DECODE_RUN(296, 1, &detail::decodeVAddCoCiU32Vop3SdstEnc);
+  RJ_DECODE_RUN(297, 1, &detail::decodeVSubCoCiU32Vop3SdstEnc);
+  RJ_DECODE_RUN(298, 1, &detail::decodeVSubrevCoCiU32Vop3SdstEnc);
+  RJ_DECODE_RUN(299, 1, &detail::decodeVFmacF32Vop3);
+  RJ_DECODE_RUN(300, 3, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(303, 1, &detail::decodeVCvtPkrtzF16F32Vop3);
+  RJ_DECODE_RUN(304, 2, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(306, 1, &detail::decodeVAddF16Vop3);
+  RJ_DECODE_RUN(307, 1, &detail::decodeVSubF16Vop3);
+  RJ_DECODE_RUN(308, 1, &detail::decodeVSubrevF16Vop3);
+  RJ_DECODE_RUN(309, 1, &detail::decodeVMulF16Vop3);
+  RJ_DECODE_RUN(310, 1, &detail::decodeVFmacF16Vop3);
+  RJ_DECODE_RUN(311, 2, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(313, 1, &detail::decodeVMaxF16Vop3);
+  RJ_DECODE_RUN(314, 1, &detail::decodeVMinF16Vop3);
+  RJ_DECODE_RUN(315, 1, &detail::decodeVLdexpF16Vop3);
+  RJ_DECODE_RUN(316, 4, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(320, 1, &detail::decodeVFmaLegacyF32Vop3);
+  RJ_DECODE_RUN(321, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(322, 1, &detail::decodeVMadI32I24Vop3);
+  RJ_DECODE_RUN(323, 1, &detail::decodeVMadU32U24Vop3);
+  RJ_DECODE_RUN(324, 1, &detail::decodeVCubeidF32Vop3);
+  RJ_DECODE_RUN(325, 1, &detail::decodeVCubescF32Vop3);
+  RJ_DECODE_RUN(326, 1, &detail::decodeVCubetcF32Vop3);
+  RJ_DECODE_RUN(327, 1, &detail::decodeVCubemaF32Vop3);
+  RJ_DECODE_RUN(328, 1, &detail::decodeVBfeU32Vop3);
+  RJ_DECODE_RUN(329, 1, &detail::decodeVBfeI32Vop3);
+  RJ_DECODE_RUN(330, 1, &detail::decodeVBfiB32Vop3);
+  RJ_DECODE_RUN(331, 1, &detail::decodeVFmaF32Vop3);
+  RJ_DECODE_RUN(332, 1, &detail::decodeVFmaF64Vop3);
+  RJ_DECODE_RUN(333, 1, &detail::decodeVLerpU8Vop3);
+  RJ_DECODE_RUN(334, 1, &detail::decodeVAlignbitB32Vop3);
+  RJ_DECODE_RUN(335, 1, &detail::decodeVAlignbyteB32Vop3);
+  RJ_DECODE_RUN(336, 1, &detail::decodeVMullitF32Vop3);
+  RJ_DECODE_RUN(337, 1, &detail::decodeVMin3F32Vop3);
+  RJ_DECODE_RUN(338, 1, &detail::decodeVMin3I32Vop3);
+  RJ_DECODE_RUN(339, 1, &detail::decodeVMin3U32Vop3);
+  RJ_DECODE_RUN(340, 1, &detail::decodeVMax3F32Vop3);
+  RJ_DECODE_RUN(341, 1, &detail::decodeVMax3I32Vop3);
+  RJ_DECODE_RUN(342, 1, &detail::decodeVMax3U32Vop3);
+  RJ_DECODE_RUN(343, 1, &detail::decodeVMed3F32Vop3);
+  RJ_DECODE_RUN(344, 1, &detail::decodeVMed3I32Vop3);
+  RJ_DECODE_RUN(345, 1, &detail::decodeVMed3U32Vop3);
+  RJ_DECODE_RUN(346, 1, &detail::decodeVSadU8Vop3);
+  RJ_DECODE_RUN(347, 1, &detail::decodeVSadHiU8Vop3);
+  RJ_DECODE_RUN(348, 1, &detail::decodeVSadU16Vop3);
+  RJ_DECODE_RUN(349, 1, &detail::decodeVSadU32Vop3);
+  RJ_DECODE_RUN(350, 1, &detail::decodeVCvtPkU8F32Vop3);
+  RJ_DECODE_RUN(351, 1, &detail::decodeVDivFixupF32Vop3);
+  RJ_DECODE_RUN(352, 1, &detail::decodeVDivFixupF64Vop3);
+  RJ_DECODE_RUN(353, 3, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(356, 1, &detail::decodeVAddF64Vop3);
+  RJ_DECODE_RUN(357, 1, &detail::decodeVMulF64Vop3);
+  RJ_DECODE_RUN(358, 1, &detail::decodeVMinF64Vop3);
+  RJ_DECODE_RUN(359, 1, &detail::decodeVMaxF64Vop3);
+  RJ_DECODE_RUN(360, 1, &detail::decodeVLdexpF64Vop3);
+  RJ_DECODE_RUN(361, 1, &detail::decodeVMulLoU32Vop3);
+  RJ_DECODE_RUN(362, 1, &detail::decodeVMulHiU32Vop3);
+  RJ_DECODE_RUN(363, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(364, 1, &detail::decodeVMulHiI32Vop3);
+  RJ_DECODE_RUN(365, 1, &detail::decodeVDivScaleF32Vop3SdstEnc);
+  RJ_DECODE_RUN(366, 1, &detail::decodeVDivScaleF64Vop3SdstEnc);
+  RJ_DECODE_RUN(367, 1, &detail::decodeVDivFmasF32Vop3);
+  RJ_DECODE_RUN(368, 1, &detail::decodeVDivFmasF64Vop3);
+  RJ_DECODE_RUN(369, 1, &detail::decodeVMsadU8Vop3);
+  RJ_DECODE_RUN(370, 1, &detail::decodeVQsadPkU16U8Vop3);
+  RJ_DECODE_RUN(371, 1, &detail::decodeVMqsadPkU16U8Vop3);
+  RJ_DECODE_RUN(372, 1, &detail::decodeVTrigPreopF64Vop3);
+  RJ_DECODE_RUN(373, 1, &detail::decodeVMqsadU32U8Vop3);
+  RJ_DECODE_RUN(374, 1, &detail::decodeVMadU64U32Vop3SdstEnc);
+  RJ_DECODE_RUN(375, 1, &detail::decodeVMadI64I32Vop3SdstEnc);
+  RJ_DECODE_RUN(376, 1, &detail::decodeVXor3B32Vop3);
+  RJ_DECODE_RUN(377, 7, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(384, 1, &detail::decodeVNopVop3);
+  RJ_DECODE_RUN(385, 1, &detail::decodeVMovB32Vop3);
+  RJ_DECODE_RUN(386, 1, &detail::decodeVReadfirstlaneB32Vop3);
+  RJ_DECODE_RUN(387, 1, &detail::decodeVCvtI32F64Vop3);
+  RJ_DECODE_RUN(388, 1, &detail::decodeVCvtF64I32Vop3);
+  RJ_DECODE_RUN(389, 1, &detail::decodeVCvtF32I32Vop3);
+  RJ_DECODE_RUN(390, 1, &detail::decodeVCvtF32U32Vop3);
+  RJ_DECODE_RUN(391, 1, &detail::decodeVCvtU32F32Vop3);
+  RJ_DECODE_RUN(392, 1, &detail::decodeVCvtI32F32Vop3);
+  RJ_DECODE_RUN(393, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(394, 1, &detail::decodeVCvtF16F32Vop3);
+  RJ_DECODE_RUN(395, 1, &detail::decodeVCvtF32F16Vop3);
+  RJ_DECODE_RUN(396, 1, &detail::decodeVCvtRpiI32F32Vop3);
+  RJ_DECODE_RUN(397, 1, &detail::decodeVCvtFlrI32F32Vop3);
+  RJ_DECODE_RUN(398, 1, &detail::decodeVCvtOffF32I4Vop3);
+  RJ_DECODE_RUN(399, 1, &detail::decodeVCvtF32F64Vop3);
+  RJ_DECODE_RUN(400, 1, &detail::decodeVCvtF64F32Vop3);
+  RJ_DECODE_RUN(401, 1, &detail::decodeVCvtF32Ubyte0Vop3);
+  RJ_DECODE_RUN(402, 1, &detail::decodeVCvtF32Ubyte1Vop3);
+  RJ_DECODE_RUN(403, 1, &detail::decodeVCvtF32Ubyte2Vop3);
+  RJ_DECODE_RUN(404, 1, &detail::decodeVCvtF32Ubyte3Vop3);
+  RJ_DECODE_RUN(405, 1, &detail::decodeVCvtU32F64Vop3);
+  RJ_DECODE_RUN(406, 1, &detail::decodeVCvtF64U32Vop3);
+  RJ_DECODE_RUN(407, 1, &detail::decodeVTruncF64Vop3);
+  RJ_DECODE_RUN(408, 1, &detail::decodeVCeilF64Vop3);
+  RJ_DECODE_RUN(409, 1, &detail::decodeVRndneF64Vop3);
+  RJ_DECODE_RUN(410, 1, &detail::decodeVFloorF64Vop3);
+  RJ_DECODE_RUN(411, 1, &detail::decodeVPipeflushVop3);
+  RJ_DECODE_RUN(412, 4, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(416, 1, &detail::decodeVFractF32Vop3);
+  RJ_DECODE_RUN(417, 1, &detail::decodeVTruncF32Vop3);
+  RJ_DECODE_RUN(418, 1, &detail::decodeVCeilF32Vop3);
+  RJ_DECODE_RUN(419, 1, &detail::decodeVRndneF32Vop3);
+  RJ_DECODE_RUN(420, 1, &detail::decodeVFloorF32Vop3);
+  RJ_DECODE_RUN(421, 1, &detail::decodeVExpF32Vop3);
+  RJ_DECODE_RUN(422, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(423, 1, &detail::decodeVLogF32Vop3);
+  RJ_DECODE_RUN(424, 2, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(426, 1, &detail::decodeVRcpF32Vop3);
+  RJ_DECODE_RUN(427, 1, &detail::decodeVRcpIflagF32Vop3);
+  RJ_DECODE_RUN(428, 2, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(430, 1, &detail::decodeVRsqF32Vop3);
+  RJ_DECODE_RUN(431, 1, &detail::decodeVRcpF64Vop3);
+  RJ_DECODE_RUN(432, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(433, 1, &detail::decodeVRsqF64Vop3);
+  RJ_DECODE_RUN(434, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(435, 1, &detail::decodeVSqrtF32Vop3);
+  RJ_DECODE_RUN(436, 1, &detail::decodeVSqrtF64Vop3);
+  RJ_DECODE_RUN(437, 1, &detail::decodeVSinF32Vop3);
+  RJ_DECODE_RUN(438, 1, &detail::decodeVCosF32Vop3);
+  RJ_DECODE_RUN(439, 1, &detail::decodeVNotB32Vop3);
+  RJ_DECODE_RUN(440, 1, &detail::decodeVBfrevB32Vop3);
+  RJ_DECODE_RUN(441, 1, &detail::decodeVFfbhU32Vop3);
+  RJ_DECODE_RUN(442, 1, &detail::decodeVFfblB32Vop3);
+  RJ_DECODE_RUN(443, 1, &detail::decodeVFfbhI32Vop3);
+  RJ_DECODE_RUN(444, 1, &detail::decodeVFrexpExpI32F64Vop3);
+  RJ_DECODE_RUN(445, 1, &detail::decodeVFrexpMantF64Vop3);
+  RJ_DECODE_RUN(446, 1, &detail::decodeVFractF64Vop3);
+  RJ_DECODE_RUN(447, 1, &detail::decodeVFrexpExpI32F32Vop3);
+  RJ_DECODE_RUN(448, 1, &detail::decodeVFrexpMantF32Vop3);
+  RJ_DECODE_RUN(449, 1, &detail::decodeVClrexcpVop3);
+  RJ_DECODE_RUN(450, 1, &detail::decodeVMovreldB32Vop3);
+  RJ_DECODE_RUN(451, 13, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(464, 1, &detail::decodeVCvtF16U16Vop3);
+  RJ_DECODE_RUN(465, 1, &detail::decodeVCvtF16I16Vop3);
+  RJ_DECODE_RUN(466, 1, &detail::decodeVCvtU16F16Vop3);
+  RJ_DECODE_RUN(467, 1, &detail::decodeVCvtI16F16Vop3);
+  RJ_DECODE_RUN(468, 1, &detail::decodeVRcpF16Vop3);
+  RJ_DECODE_RUN(469, 1, &detail::decodeVSqrtF16Vop3);
+  RJ_DECODE_RUN(470, 1, &detail::decodeVRsqF16Vop3);
+  RJ_DECODE_RUN(471, 1, &detail::decodeVLogF16Vop3);
+  RJ_DECODE_RUN(472, 1, &detail::decodeVExpF16Vop3);
+  RJ_DECODE_RUN(473, 1, &detail::decodeVFrexpMantF16Vop3);
+  RJ_DECODE_RUN(474, 1, &detail::decodeVFrexpExpI16F16Vop3);
+  RJ_DECODE_RUN(475, 1, &detail::decodeVFloorF16Vop3);
+  RJ_DECODE_RUN(476, 1, &detail::decodeVCeilF16Vop3);
+  RJ_DECODE_RUN(477, 1, &detail::decodeVTruncF16Vop3);
+  RJ_DECODE_RUN(478, 1, &detail::decodeVRndneF16Vop3);
+  RJ_DECODE_RUN(479, 1, &detail::decodeVFractF16Vop3);
+  RJ_DECODE_RUN(480, 1, &detail::decodeVSinF16Vop3);
+  RJ_DECODE_RUN(481, 1, &detail::decodeVCosF16Vop3);
+  RJ_DECODE_RUN(482, 1, &detail::decodeVSatPkU8I16Vop3);
+  RJ_DECODE_RUN(483, 1, &detail::decodeVCvtNormI16F16Vop3);
+  RJ_DECODE_RUN(484, 1, &detail::decodeVCvtNormU16F16Vop3);
+  RJ_DECODE_RUN(485, 27, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(512, 1, &detail::decodeVInterpP1F32Vop3);
+  RJ_DECODE_RUN(513, 1, &detail::decodeVInterpP2F32Vop3);
+  RJ_DECODE_RUN(514, 1, &detail::decodeVInterpMovF32Vop3);
+  RJ_DECODE_RUN(515, 252, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(767, 1, &detail::decodeVLshlrevB64Vop3);
+  RJ_DECODE_RUN(768, 1, &detail::decodeVLshrrevB64Vop3);
+  RJ_DECODE_RUN(769, 1, &detail::decodeVAshrrevI64Vop3);
+  RJ_DECODE_RUN(770, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(771, 1, &detail::decodeVAddNcU16Vop3);
+  RJ_DECODE_RUN(772, 1, &detail::decodeVSubNcU16Vop3);
+  RJ_DECODE_RUN(773, 1, &detail::decodeVMulLoU16Vop3);
+  RJ_DECODE_RUN(774, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(775, 1, &detail::decodeVLshrrevB16Vop3);
+  RJ_DECODE_RUN(776, 1, &detail::decodeVAshrrevI16Vop3);
+  RJ_DECODE_RUN(777, 1, &detail::decodeVMaxU16Vop3);
+  RJ_DECODE_RUN(778, 1, &detail::decodeVMaxI16Vop3);
+  RJ_DECODE_RUN(779, 1, &detail::decodeVMinU16Vop3);
+  RJ_DECODE_RUN(780, 1, &detail::decodeVMinI16Vop3);
+  RJ_DECODE_RUN(781, 1, &detail::decodeVAddNcI16Vop3);
+  RJ_DECODE_RUN(782, 1, &detail::decodeVSubNcI16Vop3);
+  RJ_DECODE_RUN(783, 1, &detail::decodeVAddCoU32Vop3SdstEnc);
+  RJ_DECODE_RUN(784, 1, &detail::decodeVSubCoU32Vop3SdstEnc);
+  RJ_DECODE_RUN(785, 1, &detail::decodeVPackB32F16Vop3);
+  RJ_DECODE_RUN(786, 1, &detail::decodeVCvtPknormI16F16Vop3);
+  RJ_DECODE_RUN(787, 1, &detail::decodeVCvtPknormU16F16Vop3);
+  RJ_DECODE_RUN(788, 1, &detail::decodeVLshlrevB16Vop3);
+  RJ_DECODE_RUN(789, 4, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(793, 1, &detail::decodeVSubrevCoU32Vop3SdstEnc);
+  RJ_DECODE_RUN(794, 38, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(832, 1, &detail::decodeVMadU16Vop3);
+  RJ_DECODE_RUN(833, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(834, 1, &detail::decodeVInterpP1llF16Vop3);
+  RJ_DECODE_RUN(835, 1, &detail::decodeVInterpP1lvF16Vop3);
+  RJ_DECODE_RUN(836, 1, &detail::decodeVPermB32Vop3);
+  RJ_DECODE_RUN(837, 1, &detail::decodeVXadU32Vop3);
+  RJ_DECODE_RUN(838, 1, &detail::decodeVLshlAddU32Vop3);
+  RJ_DECODE_RUN(839, 1, &detail::decodeVAddLshlU32Vop3);
+  RJ_DECODE_RUN(840, 3, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(843, 1, &detail::decodeVFmaF16Vop3);
+  RJ_DECODE_RUN(844, 5, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(849, 1, &detail::decodeVMin3F16Vop3);
+  RJ_DECODE_RUN(850, 1, &detail::decodeVMin3I16Vop3);
+  RJ_DECODE_RUN(851, 1, &detail::decodeVMin3U16Vop3);
+  RJ_DECODE_RUN(852, 1, &detail::decodeVMax3F16Vop3);
+  RJ_DECODE_RUN(853, 1, &detail::decodeVMax3I16Vop3);
+  RJ_DECODE_RUN(854, 1, &detail::decodeVMax3U16Vop3);
+  RJ_DECODE_RUN(855, 1, &detail::decodeVMed3F16Vop3);
+  RJ_DECODE_RUN(856, 1, &detail::decodeVMed3I16Vop3);
+  RJ_DECODE_RUN(857, 1, &detail::decodeVMed3U16Vop3);
+  RJ_DECODE_RUN(858, 1, &detail::decodeVInterpP2F16Vop3);
+  RJ_DECODE_RUN(859, 3, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(862, 1, &detail::decodeVMadI16Vop3);
+  RJ_DECODE_RUN(863, 1, &detail::decodeVDivFixupF16Vop3);
+  RJ_DECODE_RUN(864, 1, &detail::decodeVReadlaneB32Vop3);
+  RJ_DECODE_RUN(865, 1, &detail::decodeVWritelaneB32Vop3);
+  RJ_DECODE_RUN(866, 1, &detail::decodeVLdexpF32Vop3);
+  RJ_DECODE_RUN(867, 1, &detail::decodeVBfmB32Vop3);
+  RJ_DECODE_RUN(868, 1, &detail::decodeVBcntU32B32Vop3);
+  RJ_DECODE_RUN(869, 1, &detail::decodeVMbcntLoU32B32Vop3);
+  RJ_DECODE_RUN(870, 1, &detail::decodeVMbcntHiU32B32Vop3);
+  RJ_DECODE_RUN(871, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(872, 1, &detail::decodeVCvtPknormI16F32Vop3);
+  RJ_DECODE_RUN(873, 1, &detail::decodeVCvtPknormU16F32Vop3);
+  RJ_DECODE_RUN(874, 1, &detail::decodeVCvtPkU16U32Vop3);
+  RJ_DECODE_RUN(875, 1, &detail::decodeVCvtPkI16I32Vop3);
+  RJ_DECODE_RUN(876, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(877, 1, &detail::decodeVAdd3U32Vop3);
+  RJ_DECODE_RUN(878, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(879, 1, &detail::decodeVLshlOrB32Vop3);
+  RJ_DECODE_RUN(880, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(881, 1, &detail::decodeVAndOrB32Vop3);
+  RJ_DECODE_RUN(882, 1, &detail::decodeVOr3B32Vop3);
+  RJ_DECODE_RUN(883, 1, &detail::decodeVMadU32U16Vop3);
+  RJ_DECODE_RUN(884, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(885, 1, &detail::decodeVMadI32I16Vop3);
+  RJ_DECODE_RUN(886, 1, &detail::decodeVSubNcI32Vop3);
+  RJ_DECODE_RUN(887, 1, &detail::decodeVPermlane16B32Vop3);
+  RJ_DECODE_RUN(888, 1, &detail::decodeVPermlanex16B32Vop3);
+  RJ_DECODE_RUN(889, 6, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(895, 1, &detail::decodeVAddNcI32Vop3);
+  RJ_DECODE_RUN(896, 128, &DecoderImpl::decodeInvalid);
+  RJ_END_DECODE_TABLE()
 
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &detail::decodeSMovB32Sop1,
-    &detail::decodeSMovB64Sop1,           &detail::decodeSCmovB32Sop1,
-    &detail::decodeSCmovB64Sop1,          &detail::decodeSNotB32Sop1,
-    &detail::decodeSNotB64Sop1,           &detail::decodeSWqmB32Sop1,
-    &detail::decodeSWqmB64Sop1,           &detail::decodeSBrevB32Sop1,
-    &detail::decodeSBrevB64Sop1,          &detail::decodeSBcnt0I32B32Sop1,
-    &detail::decodeSBcnt0I32B64Sop1,      &detail::decodeSBcnt1I32B32Sop1,
-    &detail::decodeSBcnt1I32B64Sop1,      &detail::decodeSFf0I32B32Sop1,
-    &detail::decodeSFf0I32B64Sop1,        &detail::decodeSFf1I32B32Sop1,
-    &detail::decodeSFf1I32B64Sop1,        &detail::decodeSFlbitI32B32Sop1,
-    &detail::decodeSFlbitI32B64Sop1,      &detail::decodeSFlbitI32Sop1,
-    &detail::decodeSFlbitI32I64Sop1,      &detail::decodeSSextI32I8Sop1,
-    &detail::decodeSSextI32I16Sop1,       &detail::decodeSBitset0B32Sop1,
-    &detail::decodeSBitset0B64Sop1,       &detail::decodeSBitset1B32Sop1,
-    &detail::decodeSBitset1B64Sop1,       &detail::decodeSGetpcB64Sop1,
-    &detail::decodeSSetpcB64Sop1,         &detail::decodeSSwappcB64Sop1,
-    &detail::decodeSRfeB64Sop1,           &DecoderImpl::decodeInvalid,
-    &detail::decodeSAndSaveexecB64Sop1,   &detail::decodeSOrSaveexecB64Sop1,
-    &detail::decodeSXorSaveexecB64Sop1,   &detail::decodeSAndn2SaveexecB64Sop1,
-    &detail::decodeSOrn2SaveexecB64Sop1,  &detail::decodeSNandSaveexecB64Sop1,
-    &detail::decodeSNorSaveexecB64Sop1,   &detail::decodeSXnorSaveexecB64Sop1,
-    &detail::decodeSQuadmaskB32Sop1,      &detail::decodeSQuadmaskB64Sop1,
-    &detail::decodeSMovrelsB32Sop1,       &detail::decodeSMovrelsB64Sop1,
-    &detail::decodeSMovreldB32Sop1,       &detail::decodeSMovreldB64Sop1,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &detail::decodeSAbsI32Sop1,           &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &detail::decodeSAndn1SaveexecB64Sop1,
-    &detail::decodeSOrn1SaveexecB64Sop1,  &detail::decodeSAndn1WrexecB64Sop1,
-    &detail::decodeSAndn2WrexecB64Sop1,   &detail::decodeSBitreplicateB64B32Sop1,
-    &detail::decodeSAndSaveexecB32Sop1,   &detail::decodeSOrSaveexecB32Sop1,
-    &detail::decodeSXorSaveexecB32Sop1,   &detail::decodeSAndn2SaveexecB32Sop1,
-    &detail::decodeSOrn2SaveexecB32Sop1,  &detail::decodeSNandSaveexecB32Sop1,
-    &detail::decodeSNorSaveexecB32Sop1,   &detail::decodeSXnorSaveexecB32Sop1,
-    &detail::decodeSAndn1SaveexecB32Sop1, &detail::decodeSOrn1SaveexecB32Sop1,
-    &detail::decodeSAndn1WrexecB32Sop1,   &detail::decodeSAndn2WrexecB32Sop1,
-    &DecoderImpl::decodeInvalid,          &detail::decodeSMovrelsd2B32Sop1,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,          &DecoderImpl::decodeInvalid,
+  RJ_BEGIN_DECODE_TABLE(sub_decode_ds)
+  RJ_DECODE_RUN(0, 1, &detail::decodeDsAddU32Ds);
+  RJ_DECODE_RUN(1, 1, &detail::decodeDsSubU32Ds);
+  RJ_DECODE_RUN(2, 1, &detail::decodeDsRsubU32Ds);
+  RJ_DECODE_RUN(3, 1, &detail::decodeDsIncU32Ds);
+  RJ_DECODE_RUN(4, 1, &detail::decodeDsDecU32Ds);
+  RJ_DECODE_RUN(5, 1, &detail::decodeDsMinI32Ds);
+  RJ_DECODE_RUN(6, 1, &detail::decodeDsMaxI32Ds);
+  RJ_DECODE_RUN(7, 1, &detail::decodeDsMinU32Ds);
+  RJ_DECODE_RUN(8, 1, &detail::decodeDsMaxU32Ds);
+  RJ_DECODE_RUN(9, 1, &detail::decodeDsAndB32Ds);
+  RJ_DECODE_RUN(10, 1, &detail::decodeDsOrB32Ds);
+  RJ_DECODE_RUN(11, 1, &detail::decodeDsXorB32Ds);
+  RJ_DECODE_RUN(12, 1, &detail::decodeDsMskorB32Ds);
+  RJ_DECODE_RUN(13, 1, &detail::decodeDsWriteB32Ds);
+  RJ_DECODE_RUN(14, 1, &detail::decodeDsWrite2B32Ds);
+  RJ_DECODE_RUN(15, 1, &detail::decodeDsWrite2st64B32Ds);
+  RJ_DECODE_RUN(16, 1, &detail::decodeDsCmpstB32Ds);
+  RJ_DECODE_RUN(17, 1, &detail::decodeDsCmpstF32Ds);
+  RJ_DECODE_RUN(18, 1, &detail::decodeDsMinF32Ds);
+  RJ_DECODE_RUN(19, 1, &detail::decodeDsMaxF32Ds);
+  RJ_DECODE_RUN(20, 1, &detail::decodeDsNopDs);
+  RJ_DECODE_RUN(21, 1, &detail::decodeDsAddF32Ds);
+  RJ_DECODE_RUN(22, 2, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(24, 1, &detail::decodeDsGwsSemaReleaseAllDs);
+  RJ_DECODE_RUN(25, 1, &detail::decodeDsGwsInitDs);
+  RJ_DECODE_RUN(26, 1, &detail::decodeDsGwsSemaVDs);
+  RJ_DECODE_RUN(27, 1, &detail::decodeDsGwsSemaBrDs);
+  RJ_DECODE_RUN(28, 1, &detail::decodeDsGwsSemaPDs);
+  RJ_DECODE_RUN(29, 1, &detail::decodeDsGwsBarrierDs);
+  RJ_DECODE_RUN(30, 1, &detail::decodeDsWriteB8Ds);
+  RJ_DECODE_RUN(31, 1, &detail::decodeDsWriteB16Ds);
+  RJ_DECODE_RUN(32, 1, &detail::decodeDsAddRtnU32Ds);
+  RJ_DECODE_RUN(33, 1, &detail::decodeDsSubRtnU32Ds);
+  RJ_DECODE_RUN(34, 1, &detail::decodeDsRsubRtnU32Ds);
+  RJ_DECODE_RUN(35, 1, &detail::decodeDsIncRtnU32Ds);
+  RJ_DECODE_RUN(36, 1, &detail::decodeDsDecRtnU32Ds);
+  RJ_DECODE_RUN(37, 1, &detail::decodeDsMinRtnI32Ds);
+  RJ_DECODE_RUN(38, 1, &detail::decodeDsMaxRtnI32Ds);
+  RJ_DECODE_RUN(39, 1, &detail::decodeDsMinRtnU32Ds);
+  RJ_DECODE_RUN(40, 1, &detail::decodeDsMaxRtnU32Ds);
+  RJ_DECODE_RUN(41, 1, &detail::decodeDsAndRtnB32Ds);
+  RJ_DECODE_RUN(42, 1, &detail::decodeDsOrRtnB32Ds);
+  RJ_DECODE_RUN(43, 1, &detail::decodeDsXorRtnB32Ds);
+  RJ_DECODE_RUN(44, 1, &detail::decodeDsMskorRtnB32Ds);
+  RJ_DECODE_RUN(45, 1, &detail::decodeDsWrxchgRtnB32Ds);
+  RJ_DECODE_RUN(46, 1, &detail::decodeDsWrxchg2RtnB32Ds);
+  RJ_DECODE_RUN(47, 1, &detail::decodeDsWrxchg2st64RtnB32Ds);
+  RJ_DECODE_RUN(48, 1, &detail::decodeDsCmpstRtnB32Ds);
+  RJ_DECODE_RUN(49, 1, &detail::decodeDsCmpstRtnF32Ds);
+  RJ_DECODE_RUN(50, 1, &detail::decodeDsMinRtnF32Ds);
+  RJ_DECODE_RUN(51, 1, &detail::decodeDsMaxRtnF32Ds);
+  RJ_DECODE_RUN(52, 1, &detail::decodeDsWrapRtnB32Ds);
+  RJ_DECODE_RUN(53, 1, &detail::decodeDsSwizzleB32Ds);
+  RJ_DECODE_RUN(54, 1, &detail::decodeDsReadB32Ds);
+  RJ_DECODE_RUN(55, 1, &detail::decodeDsRead2B32Ds);
+  RJ_DECODE_RUN(56, 1, &detail::decodeDsRead2st64B32Ds);
+  RJ_DECODE_RUN(57, 1, &detail::decodeDsReadI8Ds);
+  RJ_DECODE_RUN(58, 1, &detail::decodeDsReadU8Ds);
+  RJ_DECODE_RUN(59, 1, &detail::decodeDsReadI16Ds);
+  RJ_DECODE_RUN(60, 1, &detail::decodeDsReadU16Ds);
+  RJ_DECODE_RUN(61, 1, &detail::decodeDsConsumeDs);
+  RJ_DECODE_RUN(62, 1, &detail::decodeDsAppendDs);
+  RJ_DECODE_RUN(63, 1, &detail::decodeDsOrderedCountDs);
+  RJ_DECODE_RUN(64, 1, &detail::decodeDsAddU64Ds);
+  RJ_DECODE_RUN(65, 1, &detail::decodeDsSubU64Ds);
+  RJ_DECODE_RUN(66, 1, &detail::decodeDsRsubU64Ds);
+  RJ_DECODE_RUN(67, 1, &detail::decodeDsIncU64Ds);
+  RJ_DECODE_RUN(68, 1, &detail::decodeDsDecU64Ds);
+  RJ_DECODE_RUN(69, 1, &detail::decodeDsMinI64Ds);
+  RJ_DECODE_RUN(70, 1, &detail::decodeDsMaxI64Ds);
+  RJ_DECODE_RUN(71, 1, &detail::decodeDsMinU64Ds);
+  RJ_DECODE_RUN(72, 1, &detail::decodeDsMaxU64Ds);
+  RJ_DECODE_RUN(73, 1, &detail::decodeDsAndB64Ds);
+  RJ_DECODE_RUN(74, 1, &detail::decodeDsOrB64Ds);
+  RJ_DECODE_RUN(75, 1, &detail::decodeDsXorB64Ds);
+  RJ_DECODE_RUN(76, 1, &detail::decodeDsMskorB64Ds);
+  RJ_DECODE_RUN(77, 1, &detail::decodeDsWriteB64Ds);
+  RJ_DECODE_RUN(78, 1, &detail::decodeDsWrite2B64Ds);
+  RJ_DECODE_RUN(79, 1, &detail::decodeDsWrite2st64B64Ds);
+  RJ_DECODE_RUN(80, 1, &detail::decodeDsCmpstB64Ds);
+  RJ_DECODE_RUN(81, 1, &detail::decodeDsCmpstF64Ds);
+  RJ_DECODE_RUN(82, 1, &detail::decodeDsMinF64Ds);
+  RJ_DECODE_RUN(83, 1, &detail::decodeDsMaxF64Ds);
+  RJ_DECODE_RUN(84, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(85, 1, &detail::decodeDsAddRtnF32Ds);
+  RJ_DECODE_RUN(86, 10, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(96, 1, &detail::decodeDsAddRtnU64Ds);
+  RJ_DECODE_RUN(97, 1, &detail::decodeDsSubRtnU64Ds);
+  RJ_DECODE_RUN(98, 1, &detail::decodeDsRsubRtnU64Ds);
+  RJ_DECODE_RUN(99, 1, &detail::decodeDsIncRtnU64Ds);
+  RJ_DECODE_RUN(100, 1, &detail::decodeDsDecRtnU64Ds);
+  RJ_DECODE_RUN(101, 1, &detail::decodeDsMinRtnI64Ds);
+  RJ_DECODE_RUN(102, 1, &detail::decodeDsMaxRtnI64Ds);
+  RJ_DECODE_RUN(103, 1, &detail::decodeDsMinRtnU64Ds);
+  RJ_DECODE_RUN(104, 1, &detail::decodeDsMaxRtnU64Ds);
+  RJ_DECODE_RUN(105, 1, &detail::decodeDsAndRtnB64Ds);
+  RJ_DECODE_RUN(106, 1, &detail::decodeDsOrRtnB64Ds);
+  RJ_DECODE_RUN(107, 1, &detail::decodeDsXorRtnB64Ds);
+  RJ_DECODE_RUN(108, 1, &detail::decodeDsMskorRtnB64Ds);
+  RJ_DECODE_RUN(109, 1, &detail::decodeDsWrxchgRtnB64Ds);
+  RJ_DECODE_RUN(110, 1, &detail::decodeDsWrxchg2RtnB64Ds);
+  RJ_DECODE_RUN(111, 1, &detail::decodeDsWrxchg2st64RtnB64Ds);
+  RJ_DECODE_RUN(112, 1, &detail::decodeDsCmpstRtnB64Ds);
+  RJ_DECODE_RUN(113, 1, &detail::decodeDsCmpstRtnF64Ds);
+  RJ_DECODE_RUN(114, 1, &detail::decodeDsMinRtnF64Ds);
+  RJ_DECODE_RUN(115, 1, &detail::decodeDsMaxRtnF64Ds);
+  RJ_DECODE_RUN(116, 2, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(118, 1, &detail::decodeDsReadB64Ds);
+  RJ_DECODE_RUN(119, 1, &detail::decodeDsRead2B64Ds);
+  RJ_DECODE_RUN(120, 1, &detail::decodeDsRead2st64B64Ds);
+  RJ_DECODE_RUN(121, 5, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(126, 1, &detail::decodeDsCondxchg32RtnB64Ds);
+  RJ_DECODE_RUN(127, 33, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(160, 1, &detail::decodeDsWriteB8D16HiDs);
+  RJ_DECODE_RUN(161, 1, &detail::decodeDsWriteB16D16HiDs);
+  RJ_DECODE_RUN(162, 1, &detail::decodeDsReadU8D16Ds);
+  RJ_DECODE_RUN(163, 1, &detail::decodeDsReadU8D16HiDs);
+  RJ_DECODE_RUN(164, 1, &detail::decodeDsReadI8D16Ds);
+  RJ_DECODE_RUN(165, 1, &detail::decodeDsReadI8D16HiDs);
+  RJ_DECODE_RUN(166, 1, &detail::decodeDsReadU16D16Ds);
+  RJ_DECODE_RUN(167, 1, &detail::decodeDsReadU16D16HiDs);
+  RJ_DECODE_RUN(168, 8, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(176, 1, &detail::decodeDsWriteAddtidB32Ds);
+  RJ_DECODE_RUN(177, 1, &detail::decodeDsReadAddtidB32Ds);
+  RJ_DECODE_RUN(178, 1, &detail::decodeDsPermuteB32Ds);
+  RJ_DECODE_RUN(179, 1, &detail::decodeDsBpermuteB32Ds);
+  RJ_DECODE_RUN(180, 42, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(222, 1, &detail::decodeDsWriteB96Ds);
+  RJ_DECODE_RUN(223, 1, &detail::decodeDsWriteB128Ds);
+  RJ_DECODE_RUN(224, 30, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(254, 1, &detail::decodeDsReadB96Ds);
+  RJ_DECODE_RUN(255, 1, &detail::decodeDsReadB128Ds);
+  RJ_END_DECODE_TABLE()
 
-};
+  RJ_BEGIN_DECODE_TABLE(sub_decode_flat)
+  RJ_DECODE_RUN(0, 8, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(8, 1, &detail::decodeFlatLoadUbyteFlat);
+  RJ_DECODE_RUN(9, 1, &detail::decodeFlatLoadSbyteFlat);
+  RJ_DECODE_RUN(10, 1, &detail::decodeFlatLoadUshortFlat);
+  RJ_DECODE_RUN(11, 1, &detail::decodeFlatLoadSshortFlat);
+  RJ_DECODE_RUN(12, 1, &detail::decodeFlatLoadDwordFlat);
+  RJ_DECODE_RUN(13, 1, &detail::decodeFlatLoadDwordx2Flat);
+  RJ_DECODE_RUN(14, 1, &detail::decodeFlatLoadDwordx4Flat);
+  RJ_DECODE_RUN(15, 1, &detail::decodeFlatLoadDwordx3Flat);
+  RJ_DECODE_RUN(16, 6, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(22, 1, &detail::decodeGlobalLoadDwordAddtidFlat);
+  RJ_DECODE_RUN(23, 1, &detail::decodeGlobalStoreDwordAddtidFlat);
+  RJ_DECODE_RUN(24, 1, &detail::decodeFlatStoreByteFlat);
+  RJ_DECODE_RUN(25, 1, &detail::decodeFlatStoreByteD16HiFlat);
+  RJ_DECODE_RUN(26, 1, &detail::decodeFlatStoreShortFlat);
+  RJ_DECODE_RUN(27, 1, &detail::decodeFlatStoreShortD16HiFlat);
+  RJ_DECODE_RUN(28, 1, &detail::decodeFlatStoreDwordFlat);
+  RJ_DECODE_RUN(29, 1, &detail::decodeFlatStoreDwordx2Flat);
+  RJ_DECODE_RUN(30, 1, &detail::decodeFlatStoreDwordx4Flat);
+  RJ_DECODE_RUN(31, 1, &detail::decodeFlatStoreDwordx3Flat);
+  RJ_DECODE_RUN(32, 1, &detail::decodeFlatLoadUbyteD16Flat);
+  RJ_DECODE_RUN(33, 1, &detail::decodeFlatLoadUbyteD16HiFlat);
+  RJ_DECODE_RUN(34, 1, &detail::decodeFlatLoadSbyteD16Flat);
+  RJ_DECODE_RUN(35, 1, &detail::decodeFlatLoadSbyteD16HiFlat);
+  RJ_DECODE_RUN(36, 1, &detail::decodeFlatLoadShortD16Flat);
+  RJ_DECODE_RUN(37, 1, &detail::decodeFlatLoadShortD16HiFlat);
+  RJ_DECODE_RUN(38, 10, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(48, 1, &detail::decodeFlatAtomicSwapFlat);
+  RJ_DECODE_RUN(49, 1, &detail::decodeFlatAtomicCmpswapFlat);
+  RJ_DECODE_RUN(50, 1, &detail::decodeFlatAtomicAddFlat);
+  RJ_DECODE_RUN(51, 1, &detail::decodeFlatAtomicSubFlat);
+  RJ_DECODE_RUN(52, 1, &detail::decodeGlobalAtomicCsubFlat);
+  RJ_DECODE_RUN(53, 1, &detail::decodeFlatAtomicSminFlat);
+  RJ_DECODE_RUN(54, 1, &detail::decodeFlatAtomicUminFlat);
+  RJ_DECODE_RUN(55, 1, &detail::decodeFlatAtomicSmaxFlat);
+  RJ_DECODE_RUN(56, 1, &detail::decodeFlatAtomicUmaxFlat);
+  RJ_DECODE_RUN(57, 1, &detail::decodeFlatAtomicAndFlat);
+  RJ_DECODE_RUN(58, 1, &detail::decodeFlatAtomicOrFlat);
+  RJ_DECODE_RUN(59, 1, &detail::decodeFlatAtomicXorFlat);
+  RJ_DECODE_RUN(60, 1, &detail::decodeFlatAtomicIncFlat);
+  RJ_DECODE_RUN(61, 1, &detail::decodeFlatAtomicDecFlat);
+  RJ_DECODE_RUN(62, 1, &detail::decodeFlatAtomicFcmpswapFlat);
+  RJ_DECODE_RUN(63, 1, &detail::decodeFlatAtomicFminFlat);
+  RJ_DECODE_RUN(64, 1, &detail::decodeFlatAtomicFmaxFlat);
+  RJ_DECODE_RUN(65, 15, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(80, 1, &detail::decodeFlatAtomicSwapX2Flat);
+  RJ_DECODE_RUN(81, 1, &detail::decodeFlatAtomicCmpswapX2Flat);
+  RJ_DECODE_RUN(82, 1, &detail::decodeFlatAtomicAddX2Flat);
+  RJ_DECODE_RUN(83, 1, &detail::decodeFlatAtomicSubX2Flat);
+  RJ_DECODE_RUN(84, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(85, 1, &detail::decodeFlatAtomicSminX2Flat);
+  RJ_DECODE_RUN(86, 1, &detail::decodeFlatAtomicUminX2Flat);
+  RJ_DECODE_RUN(87, 1, &detail::decodeFlatAtomicSmaxX2Flat);
+  RJ_DECODE_RUN(88, 1, &detail::decodeFlatAtomicUmaxX2Flat);
+  RJ_DECODE_RUN(89, 1, &detail::decodeFlatAtomicAndX2Flat);
+  RJ_DECODE_RUN(90, 1, &detail::decodeFlatAtomicOrX2Flat);
+  RJ_DECODE_RUN(91, 1, &detail::decodeFlatAtomicXorX2Flat);
+  RJ_DECODE_RUN(92, 1, &detail::decodeFlatAtomicIncX2Flat);
+  RJ_DECODE_RUN(93, 1, &detail::decodeFlatAtomicDecX2Flat);
+  RJ_DECODE_RUN(94, 1, &detail::decodeFlatAtomicFcmpswapX2Flat);
+  RJ_DECODE_RUN(95, 1, &detail::decodeFlatAtomicFminX2Flat);
+  RJ_DECODE_RUN(96, 1, &detail::decodeFlatAtomicFmaxX2Flat);
+  RJ_DECODE_RUN(97, 31, &DecoderImpl::decodeInvalid);
+  RJ_END_DECODE_TABLE()
 
-const std::array<DecoderImpl::DecodeFunc, 128> DecoderImpl::sub_decode_sopc = {
+  RJ_BEGIN_DECODE_TABLE(sub_decode_mubuf)
+  RJ_DECODE_RUN(0, 1, &detail::decodeBufferLoadFormatXMubuf);
+  RJ_DECODE_RUN(1, 1, &detail::decodeBufferLoadFormatXyMubuf);
+  RJ_DECODE_RUN(2, 1, &detail::decodeBufferLoadFormatXyzMubuf);
+  RJ_DECODE_RUN(3, 1, &detail::decodeBufferLoadFormatXyzwMubuf);
+  RJ_DECODE_RUN(4, 1, &detail::decodeBufferStoreFormatXMubuf);
+  RJ_DECODE_RUN(5, 1, &detail::decodeBufferStoreFormatXyMubuf);
+  RJ_DECODE_RUN(6, 1, &detail::decodeBufferStoreFormatXyzMubuf);
+  RJ_DECODE_RUN(7, 1, &detail::decodeBufferStoreFormatXyzwMubuf);
+  RJ_DECODE_RUN(8, 1, &detail::decodeBufferLoadUbyteMubuf);
+  RJ_DECODE_RUN(9, 1, &detail::decodeBufferLoadSbyteMubuf);
+  RJ_DECODE_RUN(10, 1, &detail::decodeBufferLoadUshortMubuf);
+  RJ_DECODE_RUN(11, 1, &detail::decodeBufferLoadSshortMubuf);
+  RJ_DECODE_RUN(12, 1, &detail::decodeBufferLoadDwordMubuf);
+  RJ_DECODE_RUN(13, 1, &detail::decodeBufferLoadDwordx2Mubuf);
+  RJ_DECODE_RUN(14, 1, &detail::decodeBufferLoadDwordx4Mubuf);
+  RJ_DECODE_RUN(15, 1, &detail::decodeBufferLoadDwordx3Mubuf);
+  RJ_DECODE_RUN(16, 8, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(24, 1, &detail::decodeBufferStoreByteMubuf);
+  RJ_DECODE_RUN(25, 1, &detail::decodeBufferStoreByteD16HiMubuf);
+  RJ_DECODE_RUN(26, 1, &detail::decodeBufferStoreShortMubuf);
+  RJ_DECODE_RUN(27, 1, &detail::decodeBufferStoreShortD16HiMubuf);
+  RJ_DECODE_RUN(28, 1, &detail::decodeBufferStoreDwordMubuf);
+  RJ_DECODE_RUN(29, 1, &detail::decodeBufferStoreDwordx2Mubuf);
+  RJ_DECODE_RUN(30, 1, &detail::decodeBufferStoreDwordx4Mubuf);
+  RJ_DECODE_RUN(31, 1, &detail::decodeBufferStoreDwordx3Mubuf);
+  RJ_DECODE_RUN(32, 1, &detail::decodeBufferLoadUbyteD16Mubuf);
+  RJ_DECODE_RUN(33, 1, &detail::decodeBufferLoadUbyteD16HiMubuf);
+  RJ_DECODE_RUN(34, 1, &detail::decodeBufferLoadSbyteD16Mubuf);
+  RJ_DECODE_RUN(35, 1, &detail::decodeBufferLoadSbyteD16HiMubuf);
+  RJ_DECODE_RUN(36, 1, &detail::decodeBufferLoadShortD16Mubuf);
+  RJ_DECODE_RUN(37, 1, &detail::decodeBufferLoadShortD16HiMubuf);
+  RJ_DECODE_RUN(38, 1, &detail::decodeBufferLoadFormatD16HiXMubuf);
+  RJ_DECODE_RUN(39, 1, &detail::decodeBufferStoreFormatD16HiXMubuf);
+  RJ_DECODE_RUN(40, 8, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(48, 1, &detail::decodeBufferAtomicSwapMubuf);
+  RJ_DECODE_RUN(49, 1, &detail::decodeBufferAtomicCmpswapMubuf);
+  RJ_DECODE_RUN(50, 1, &detail::decodeBufferAtomicAddMubuf);
+  RJ_DECODE_RUN(51, 1, &detail::decodeBufferAtomicSubMubuf);
+  RJ_DECODE_RUN(52, 1, &detail::decodeBufferAtomicCsubMubuf);
+  RJ_DECODE_RUN(53, 1, &detail::decodeBufferAtomicSminMubuf);
+  RJ_DECODE_RUN(54, 1, &detail::decodeBufferAtomicUminMubuf);
+  RJ_DECODE_RUN(55, 1, &detail::decodeBufferAtomicSmaxMubuf);
+  RJ_DECODE_RUN(56, 1, &detail::decodeBufferAtomicUmaxMubuf);
+  RJ_DECODE_RUN(57, 1, &detail::decodeBufferAtomicAndMubuf);
+  RJ_DECODE_RUN(58, 1, &detail::decodeBufferAtomicOrMubuf);
+  RJ_DECODE_RUN(59, 1, &detail::decodeBufferAtomicXorMubuf);
+  RJ_DECODE_RUN(60, 1, &detail::decodeBufferAtomicIncMubuf);
+  RJ_DECODE_RUN(61, 1, &detail::decodeBufferAtomicDecMubuf);
+  RJ_DECODE_RUN(62, 1, &detail::decodeBufferAtomicFcmpswapMubuf);
+  RJ_DECODE_RUN(63, 1, &detail::decodeBufferAtomicFminMubuf);
+  RJ_DECODE_RUN(64, 1, &detail::decodeBufferAtomicFmaxMubuf);
+  RJ_DECODE_RUN(65, 15, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(80, 1, &detail::decodeBufferAtomicSwapX2Mubuf);
+  RJ_DECODE_RUN(81, 1, &detail::decodeBufferAtomicCmpswapX2Mubuf);
+  RJ_DECODE_RUN(82, 1, &detail::decodeBufferAtomicAddX2Mubuf);
+  RJ_DECODE_RUN(83, 1, &detail::decodeBufferAtomicSubX2Mubuf);
+  RJ_DECODE_RUN(84, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(85, 1, &detail::decodeBufferAtomicSminX2Mubuf);
+  RJ_DECODE_RUN(86, 1, &detail::decodeBufferAtomicUminX2Mubuf);
+  RJ_DECODE_RUN(87, 1, &detail::decodeBufferAtomicSmaxX2Mubuf);
+  RJ_DECODE_RUN(88, 1, &detail::decodeBufferAtomicUmaxX2Mubuf);
+  RJ_DECODE_RUN(89, 1, &detail::decodeBufferAtomicAndX2Mubuf);
+  RJ_DECODE_RUN(90, 1, &detail::decodeBufferAtomicOrX2Mubuf);
+  RJ_DECODE_RUN(91, 1, &detail::decodeBufferAtomicXorX2Mubuf);
+  RJ_DECODE_RUN(92, 1, &detail::decodeBufferAtomicIncX2Mubuf);
+  RJ_DECODE_RUN(93, 1, &detail::decodeBufferAtomicDecX2Mubuf);
+  RJ_DECODE_RUN(94, 1, &detail::decodeBufferAtomicFcmpswapX2Mubuf);
+  RJ_DECODE_RUN(95, 1, &detail::decodeBufferAtomicFminX2Mubuf);
+  RJ_DECODE_RUN(96, 1, &detail::decodeBufferAtomicFmaxX2Mubuf);
+  RJ_DECODE_RUN(97, 16, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(113, 1, &detail::decodeBufferGl0InvMubuf);
+  RJ_DECODE_RUN(114, 1, &detail::decodeBufferGl1InvMubuf);
+  RJ_DECODE_RUN(115, 13, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(128, 1, &detail::decodeBufferLoadFormatD16XMubuf);
+  RJ_DECODE_RUN(129, 1, &detail::decodeBufferLoadFormatD16XyMubuf);
+  RJ_DECODE_RUN(130, 1, &detail::decodeBufferLoadFormatD16XyzMubuf);
+  RJ_DECODE_RUN(131, 1, &detail::decodeBufferLoadFormatD16XyzwMubuf);
+  RJ_DECODE_RUN(132, 1, &detail::decodeBufferStoreFormatD16XMubuf);
+  RJ_DECODE_RUN(133, 1, &detail::decodeBufferStoreFormatD16XyMubuf);
+  RJ_DECODE_RUN(134, 1, &detail::decodeBufferStoreFormatD16XyzMubuf);
+  RJ_DECODE_RUN(135, 1, &detail::decodeBufferStoreFormatD16XyzwMubuf);
+  RJ_DECODE_RUN(136, 120, &DecoderImpl::decodeInvalid);
+  RJ_END_DECODE_TABLE()
 
-    &detail::decodeSCmpEqI32Sopc,   &detail::decodeSCmpLgI32Sopc,   &detail::decodeSCmpGtI32Sopc,
-    &detail::decodeSCmpGeI32Sopc,   &detail::decodeSCmpLtI32Sopc,   &detail::decodeSCmpLeI32Sopc,
-    &detail::decodeSCmpEqU32Sopc,   &detail::decodeSCmpLgU32Sopc,   &detail::decodeSCmpGtU32Sopc,
-    &detail::decodeSCmpGeU32Sopc,   &detail::decodeSCmpLtU32Sopc,   &detail::decodeSCmpLeU32Sopc,
-    &detail::decodeSBitcmp0B32Sopc, &detail::decodeSBitcmp1B32Sopc, &detail::decodeSBitcmp0B64Sopc,
-    &detail::decodeSBitcmp1B64Sopc, &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &detail::decodeSCmpEqU64Sopc,   &detail::decodeSCmpLgU64Sopc,   &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,    &DecoderImpl::decodeInvalid,
+  RJ_BEGIN_DECODE_TABLE(sub_decode_mtbuf)
+  RJ_DECODE_RUN(0, 1, &detail::decodeTbufferLoadFormatXMtbuf);
+  RJ_DECODE_RUN(1, 1, &detail::decodeTbufferLoadFormatXyMtbuf);
+  RJ_DECODE_RUN(2, 1, &detail::decodeTbufferLoadFormatXyzMtbuf);
+  RJ_DECODE_RUN(3, 1, &detail::decodeTbufferLoadFormatXyzwMtbuf);
+  RJ_DECODE_RUN(4, 1, &detail::decodeTbufferStoreFormatXMtbuf);
+  RJ_DECODE_RUN(5, 1, &detail::decodeTbufferStoreFormatXyMtbuf);
+  RJ_DECODE_RUN(6, 1, &detail::decodeTbufferStoreFormatXyzMtbuf);
+  RJ_DECODE_RUN(7, 1, &detail::decodeTbufferStoreFormatXyzwMtbuf);
+  RJ_DECODE_RUN(8, 1, &detail::decodeTbufferLoadFormatD16XMtbuf);
+  RJ_DECODE_RUN(9, 1, &detail::decodeTbufferLoadFormatD16XyMtbuf);
+  RJ_DECODE_RUN(10, 1, &detail::decodeTbufferLoadFormatD16XyzMtbuf);
+  RJ_DECODE_RUN(11, 1, &detail::decodeTbufferLoadFormatD16XyzwMtbuf);
+  RJ_DECODE_RUN(12, 1, &detail::decodeTbufferStoreFormatD16XMtbuf);
+  RJ_DECODE_RUN(13, 1, &detail::decodeTbufferStoreFormatD16XyMtbuf);
+  RJ_DECODE_RUN(14, 1, &detail::decodeTbufferStoreFormatD16XyzMtbuf);
+  RJ_DECODE_RUN(15, 1, &detail::decodeTbufferStoreFormatD16XyzwMtbuf);
+  RJ_END_DECODE_TABLE()
 
-};
+  RJ_BEGIN_DECODE_TABLE(sub_decode_mimg)
+  RJ_DECODE_RUN(0, 1, &detail::decodeImageLoadMimg);
+  RJ_DECODE_RUN(1, 1, &detail::decodeImageLoadMipMimg);
+  RJ_DECODE_RUN(2, 1, &detail::decodeImageLoadPckMimg);
+  RJ_DECODE_RUN(3, 1, &detail::decodeImageLoadPckSgnMimg);
+  RJ_DECODE_RUN(4, 1, &detail::decodeImageLoadMipPckMimg);
+  RJ_DECODE_RUN(5, 1, &detail::decodeImageLoadMipPckSgnMimg);
+  RJ_DECODE_RUN(6, 2, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(8, 1, &detail::decodeImageStoreMimg);
+  RJ_DECODE_RUN(9, 1, &detail::decodeImageStoreMipMimg);
+  RJ_DECODE_RUN(10, 1, &detail::decodeImageStorePckMimg);
+  RJ_DECODE_RUN(11, 1, &detail::decodeImageStoreMipPckMimg);
+  RJ_DECODE_RUN(12, 2, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(14, 1, &detail::decodeImageGetResinfoMimg);
+  RJ_DECODE_RUN(15, 1, &detail::decodeImageAtomicSwapMimg);
+  RJ_DECODE_RUN(16, 1, &detail::decodeImageAtomicCmpswapMimg);
+  RJ_DECODE_RUN(17, 1, &detail::decodeImageAtomicAddMimg);
+  RJ_DECODE_RUN(18, 1, &detail::decodeImageAtomicSubMimg);
+  RJ_DECODE_RUN(19, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(20, 1, &detail::decodeImageAtomicSminMimg);
+  RJ_DECODE_RUN(21, 1, &detail::decodeImageAtomicUminMimg);
+  RJ_DECODE_RUN(22, 1, &detail::decodeImageAtomicSmaxMimg);
+  RJ_DECODE_RUN(23, 1, &detail::decodeImageAtomicUmaxMimg);
+  RJ_DECODE_RUN(24, 1, &detail::decodeImageAtomicAndMimg);
+  RJ_DECODE_RUN(25, 1, &detail::decodeImageAtomicOrMimg);
+  RJ_DECODE_RUN(26, 1, &detail::decodeImageAtomicXorMimg);
+  RJ_DECODE_RUN(27, 1, &detail::decodeImageAtomicIncMimg);
+  RJ_DECODE_RUN(28, 1, &detail::decodeImageAtomicDecMimg);
+  RJ_DECODE_RUN(29, 1, &detail::decodeImageAtomicFcmpswapMimg);
+  RJ_DECODE_RUN(30, 1, &detail::decodeImageAtomicFminMimg);
+  RJ_DECODE_RUN(31, 1, &detail::decodeImageAtomicFmaxMimg);
+  RJ_DECODE_RUN(32, 1, &detail::decodeImageSampleMimg);
+  RJ_DECODE_RUN(33, 1, &detail::decodeImageSampleClMimg);
+  RJ_DECODE_RUN(34, 1, &detail::decodeImageSampleDMimg);
+  RJ_DECODE_RUN(35, 1, &detail::decodeImageSampleDClMimg);
+  RJ_DECODE_RUN(36, 1, &detail::decodeImageSampleLMimg);
+  RJ_DECODE_RUN(37, 1, &detail::decodeImageSampleBMimg);
+  RJ_DECODE_RUN(38, 1, &detail::decodeImageSampleBClMimg);
+  RJ_DECODE_RUN(39, 1, &detail::decodeImageSampleLzMimg);
+  RJ_DECODE_RUN(40, 1, &detail::decodeImageSampleCMimg);
+  RJ_DECODE_RUN(41, 1, &detail::decodeImageSampleCClMimg);
+  RJ_DECODE_RUN(42, 1, &detail::decodeImageSampleCDMimg);
+  RJ_DECODE_RUN(43, 1, &detail::decodeImageSampleCDClMimg);
+  RJ_DECODE_RUN(44, 1, &detail::decodeImageSampleCLMimg);
+  RJ_DECODE_RUN(45, 1, &detail::decodeImageSampleCBMimg);
+  RJ_DECODE_RUN(46, 1, &detail::decodeImageSampleCBClMimg);
+  RJ_DECODE_RUN(47, 1, &detail::decodeImageSampleCLzMimg);
+  RJ_DECODE_RUN(48, 1, &detail::decodeImageSampleOMimg);
+  RJ_DECODE_RUN(49, 1, &detail::decodeImageSampleClOMimg);
+  RJ_DECODE_RUN(50, 1, &detail::decodeImageSampleDOMimg);
+  RJ_DECODE_RUN(51, 1, &detail::decodeImageSampleDClOMimg);
+  RJ_DECODE_RUN(52, 1, &detail::decodeImageSampleLOMimg);
+  RJ_DECODE_RUN(53, 1, &detail::decodeImageSampleBOMimg);
+  RJ_DECODE_RUN(54, 1, &detail::decodeImageSampleBClOMimg);
+  RJ_DECODE_RUN(55, 1, &detail::decodeImageSampleLzOMimg);
+  RJ_DECODE_RUN(56, 1, &detail::decodeImageSampleCOMimg);
+  RJ_DECODE_RUN(57, 1, &detail::decodeImageSampleCClOMimg);
+  RJ_DECODE_RUN(58, 1, &detail::decodeImageSampleCDOMimg);
+  RJ_DECODE_RUN(59, 1, &detail::decodeImageSampleCDClOMimg);
+  RJ_DECODE_RUN(60, 1, &detail::decodeImageSampleCLOMimg);
+  RJ_DECODE_RUN(61, 1, &detail::decodeImageSampleCBOMimg);
+  RJ_DECODE_RUN(62, 1, &detail::decodeImageSampleCBClOMimg);
+  RJ_DECODE_RUN(63, 1, &detail::decodeImageSampleCLzOMimg);
+  RJ_DECODE_RUN(64, 1, &detail::decodeImageGather4Mimg);
+  RJ_DECODE_RUN(65, 1, &detail::decodeImageGather4ClMimg);
+  RJ_DECODE_RUN(66, 1, &detail::decodeImageLoadBy2Mimg);
+  RJ_DECODE_RUN(67, 1, &detail::decodeImageLoadBy4Mimg);
+  RJ_DECODE_RUN(68, 1, &detail::decodeImageGather4LMimg);
+  RJ_DECODE_RUN(69, 1, &detail::decodeImageGather4BMimg);
+  RJ_DECODE_RUN(70, 1, &detail::decodeImageGather4BClMimg);
+  RJ_DECODE_RUN(71, 1, &detail::decodeImageGather4LzMimg);
+  RJ_DECODE_RUN(72, 1, &detail::decodeImageGather4CMimg);
+  RJ_DECODE_RUN(73, 1, &detail::decodeImageGather4CClMimg);
+  RJ_DECODE_RUN(74, 1, &detail::decodeImageLoadMipBy2Mimg);
+  RJ_DECODE_RUN(75, 1, &detail::decodeImageLoadMipBy4Mimg);
+  RJ_DECODE_RUN(76, 1, &detail::decodeImageGather4CLMimg);
+  RJ_DECODE_RUN(77, 1, &detail::decodeImageGather4CBMimg);
+  RJ_DECODE_RUN(78, 1, &detail::decodeImageGather4CBClMimg);
+  RJ_DECODE_RUN(79, 1, &detail::decodeImageGather4CLzMimg);
+  RJ_DECODE_RUN(80, 1, &detail::decodeImageGather4OMimg);
+  RJ_DECODE_RUN(81, 1, &detail::decodeImageGather4ClOMimg);
+  RJ_DECODE_RUN(82, 1, &detail::decodeImageStoreBy2Mimg);
+  RJ_DECODE_RUN(83, 1, &detail::decodeImageStoreBy4Mimg);
+  RJ_DECODE_RUN(84, 1, &detail::decodeImageGather4LOMimg);
+  RJ_DECODE_RUN(85, 1, &detail::decodeImageGather4BOMimg);
+  RJ_DECODE_RUN(86, 1, &detail::decodeImageGather4BClOMimg);
+  RJ_DECODE_RUN(87, 1, &detail::decodeImageGather4LzOMimg);
+  RJ_DECODE_RUN(88, 1, &detail::decodeImageGather4COMimg);
+  RJ_DECODE_RUN(89, 1, &detail::decodeImageGather4CClOMimg);
+  RJ_DECODE_RUN(90, 1, &detail::decodeImageStoreMipBy2Mimg);
+  RJ_DECODE_RUN(91, 1, &detail::decodeImageStoreMipBy4Mimg);
+  RJ_DECODE_RUN(92, 1, &detail::decodeImageGather4CLOMimg);
+  RJ_DECODE_RUN(93, 1, &detail::decodeImageGather4CBOMimg);
+  RJ_DECODE_RUN(94, 1, &detail::decodeImageGather4CBClOMimg);
+  RJ_DECODE_RUN(95, 1, &detail::decodeImageGather4CLzOMimg);
+  RJ_DECODE_RUN(96, 1, &detail::decodeImageGetLodMimg);
+  RJ_DECODE_RUN(97, 1, &detail::decodeImageGather4hMimg);
+  RJ_DECODE_RUN(98, 1, &detail::decodeImageGather4hPckMimg);
+  RJ_DECODE_RUN(99, 1, &detail::decodeImageGather8hPckMimg);
+  RJ_DECODE_RUN(100, 4, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(104, 1, &detail::decodeImageSampleCdMimg);
+  RJ_DECODE_RUN(105, 1, &detail::decodeImageSampleCdClMimg);
+  RJ_DECODE_RUN(106, 1, &detail::decodeImageSampleCCdMimg);
+  RJ_DECODE_RUN(107, 1, &detail::decodeImageSampleCCdClMimg);
+  RJ_DECODE_RUN(108, 1, &detail::decodeImageSampleCdOMimg);
+  RJ_DECODE_RUN(109, 1, &detail::decodeImageSampleCdClOMimg);
+  RJ_DECODE_RUN(110, 1, &detail::decodeImageSampleCCdOMimg);
+  RJ_DECODE_RUN(111, 1, &detail::decodeImageSampleCCdClOMimg);
+  RJ_DECODE_RUN(112, 1, &detail::decodeImageLoadPck2Mimg);
+  RJ_DECODE_RUN(113, 1, &detail::decodeImageLoadPck4Mimg);
+  RJ_DECODE_RUN(114, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(115, 1, &detail::decodeImageLoadMipPck2Mimg);
+  RJ_DECODE_RUN(116, 1, &detail::decodeImageLoadMipPck4Mimg);
+  RJ_DECODE_RUN(117, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(118, 1, &detail::decodeImageStorePck2Mimg);
+  RJ_DECODE_RUN(119, 1, &detail::decodeImageStorePck4Mimg);
+  RJ_DECODE_RUN(120, 1, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(121, 1, &detail::decodeImageStoreMipPck2Mimg);
+  RJ_DECODE_RUN(122, 1, &detail::decodeImageStoreMipPck4Mimg);
+  RJ_DECODE_RUN(123, 5, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(128, 1, &detail::decodeImageMsaaLoadMimg);
+  RJ_DECODE_RUN(129, 33, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(162, 1, &detail::decodeImageSampleDG16Mimg);
+  RJ_DECODE_RUN(163, 1, &detail::decodeImageSampleDClG16Mimg);
+  RJ_DECODE_RUN(164, 6, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(170, 1, &detail::decodeImageSampleCDG16Mimg);
+  RJ_DECODE_RUN(171, 1, &detail::decodeImageSampleCDClG16Mimg);
+  RJ_DECODE_RUN(172, 6, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(178, 1, &detail::decodeImageSampleDOG16Mimg);
+  RJ_DECODE_RUN(179, 1, &detail::decodeImageSampleDClOG16Mimg);
+  RJ_DECODE_RUN(180, 6, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(186, 1, &detail::decodeImageSampleCDOG16Mimg);
+  RJ_DECODE_RUN(187, 1, &detail::decodeImageSampleCDClOG16Mimg);
+  RJ_DECODE_RUN(188, 42, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(230, 1, &detail::decodeImageBvhIntersectRayMimg);
+  RJ_DECODE_RUN(231, 1, &detail::decodeImageBvh64IntersectRayMimg);
+  RJ_DECODE_RUN(232, 1, &detail::decodeImageSampleCdG16Mimg);
+  RJ_DECODE_RUN(233, 1, &detail::decodeImageSampleCdClG16Mimg);
+  RJ_DECODE_RUN(234, 1, &detail::decodeImageSampleCCdG16Mimg);
+  RJ_DECODE_RUN(235, 1, &detail::decodeImageSampleCCdClG16Mimg);
+  RJ_DECODE_RUN(236, 1, &detail::decodeImageSampleCdOG16Mimg);
+  RJ_DECODE_RUN(237, 1, &detail::decodeImageSampleCdClOG16Mimg);
+  RJ_DECODE_RUN(238, 1, &detail::decodeImageSampleCCdOG16Mimg);
+  RJ_DECODE_RUN(239, 1, &detail::decodeImageSampleCCdClOG16Mimg);
+  RJ_DECODE_RUN(240, 16, &DecoderImpl::decodeInvalid);
+  RJ_END_DECODE_TABLE()
 
-const std::array<DecoderImpl::DecodeFunc, 128> DecoderImpl::sub_decode_sopp = {
-
-    &detail::decodeSNopSopp,
-    &detail::decodeSEndpgmSopp,
-    &detail::decodeSBranchSopp,
-    &detail::decodeSWakeupSopp,
-    &detail::decodeSCbranchScc0Sopp,
-    &detail::decodeSCbranchScc1Sopp,
-    &detail::decodeSCbranchVcczSopp,
-    &detail::decodeSCbranchVccnzSopp,
-    &detail::decodeSCbranchExeczSopp,
-    &detail::decodeSCbranchExecnzSopp,
-    &detail::decodeSBarrierSopp,
-    &detail::decodeSSetkillSopp,
-    &detail::decodeSWaitcntSopp,
-    &detail::decodeSSethaltSopp,
-    &detail::decodeSSleepSopp,
-    &detail::decodeSSetprioSopp,
-    &detail::decodeSSendmsgSopp,
-    &detail::decodeSSendmsghaltSopp,
-    &detail::decodeSTrapSopp,
-    &detail::decodeSIcacheInvSopp,
-    &detail::decodeSIncperflevelSopp,
-    &detail::decodeSDecperflevelSopp,
-    &detail::decodeSTtracedataSopp,
-    &detail::decodeSCbranchCdbgsysSopp,
-    &detail::decodeSCbranchCdbguserSopp,
-    &detail::decodeSCbranchCdbgsysOrUserSopp,
-    &detail::decodeSCbranchCdbgsysAndUserSopp,
-    &detail::decodeSEndpgmSavedSopp,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeSEndpgmOrderedPsDoneSopp,
-    &detail::decodeSCodeEndSopp,
-    &detail::decodeSInstPrefetchSopp,
-    &detail::decodeSClauseSopp,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeSWaitcntDepctrSopp,
-    &detail::decodeSRoundModeSopp,
-    &detail::decodeSDenormModeSopp,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeSTtracedataImmSopp,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-
-};
-
-const std::array<DecoderImpl::DecodeFunc, 4> DecoderImpl::sub_decode_vintrp = {
-
-    &detail::decodeVInterpP1F32Vintrp,
-    &detail::decodeVInterpP2F32Vintrp,
-    &detail::decodeVInterpMovF32Vintrp,
-    &DecoderImpl::decodeInvalid,
-
-};
-
-const std::array<DecoderImpl::DecodeFunc, 128> DecoderImpl::sub_decode_vop3p = {
-
-    &detail::decodeVPkMadI16Vop3p,     &detail::decodeVPkMulLoU16Vop3p,
-    &detail::decodeVPkAddI16Vop3p,     &detail::decodeVPkSubI16Vop3p,
-    &detail::decodeVPkLshlrevB16Vop3p, &detail::decodeVPkLshrrevB16Vop3p,
-    &detail::decodeVPkAshrrevI16Vop3p, &detail::decodeVPkMaxI16Vop3p,
-    &detail::decodeVPkMinI16Vop3p,     &detail::decodeVPkMadU16Vop3p,
-    &detail::decodeVPkAddU16Vop3p,     &detail::decodeVPkSubU16Vop3p,
-    &detail::decodeVPkMaxU16Vop3p,     &detail::decodeVPkMinU16Vop3p,
-    &detail::decodeVPkFmaF16Vop3p,     &detail::decodeVPkAddF16Vop3p,
-    &detail::decodeVPkMulF16Vop3p,     &detail::decodeVPkMinF16Vop3p,
-    &detail::decodeVPkMaxF16Vop3p,     &detail::decodeVDot2F32F16Vop3p,
-    &detail::decodeVDot2I32I16Vop3p,   &detail::decodeVDot2U32U16Vop3p,
-    &detail::decodeVDot4I32I8Vop3p,    &detail::decodeVDot4U32U8Vop3p,
-    &detail::decodeVDot8I32I4Vop3p,    &detail::decodeVDot8U32U4Vop3p,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &detail::decodeVFmaMixF32Vop3p,    &detail::decodeVFmaMixloF16Vop3p,
-    &detail::decodeVFmaMixhiF16Vop3p,  &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,       &DecoderImpl::decodeInvalid,
-
-};
-
-const std::array<DecoderImpl::DecodeFunc, 1024> DecoderImpl::sub_decode_vop3 = {
-
-    &detail::decodeVCmpFF32Vop3,
-    &detail::decodeVCmpLtF32Vop3,
-    &detail::decodeVCmpEqF32Vop3,
-    &detail::decodeVCmpLeF32Vop3,
-    &detail::decodeVCmpGtF32Vop3,
-    &detail::decodeVCmpLgF32Vop3,
-    &detail::decodeVCmpGeF32Vop3,
-    &detail::decodeVCmpOF32Vop3,
-    &detail::decodeVCmpUF32Vop3,
-    &detail::decodeVCmpNgeF32Vop3,
-    &detail::decodeVCmpNlgF32Vop3,
-    &detail::decodeVCmpNgtF32Vop3,
-    &detail::decodeVCmpNleF32Vop3,
-    &detail::decodeVCmpNeqF32Vop3,
-    &detail::decodeVCmpNltF32Vop3,
-    &detail::decodeVCmpTruF32Vop3,
-    &detail::decodeVCmpxFF32Vop3,
-    &detail::decodeVCmpxLtF32Vop3,
-    &detail::decodeVCmpxEqF32Vop3,
-    &detail::decodeVCmpxLeF32Vop3,
-    &detail::decodeVCmpxGtF32Vop3,
-    &detail::decodeVCmpxLgF32Vop3,
-    &detail::decodeVCmpxGeF32Vop3,
-    &detail::decodeVCmpxOF32Vop3,
-    &detail::decodeVCmpxUF32Vop3,
-    &detail::decodeVCmpxNgeF32Vop3,
-    &detail::decodeVCmpxNlgF32Vop3,
-    &detail::decodeVCmpxNgtF32Vop3,
-    &detail::decodeVCmpxNleF32Vop3,
-    &detail::decodeVCmpxNeqF32Vop3,
-    &detail::decodeVCmpxNltF32Vop3,
-    &detail::decodeVCmpxTruF32Vop3,
-    &detail::decodeVCmpFF64Vop3,
-    &detail::decodeVCmpLtF64Vop3,
-    &detail::decodeVCmpEqF64Vop3,
-    &detail::decodeVCmpLeF64Vop3,
-    &detail::decodeVCmpGtF64Vop3,
-    &detail::decodeVCmpLgF64Vop3,
-    &detail::decodeVCmpGeF64Vop3,
-    &detail::decodeVCmpOF64Vop3,
-    &detail::decodeVCmpUF64Vop3,
-    &detail::decodeVCmpNgeF64Vop3,
-    &detail::decodeVCmpNlgF64Vop3,
-    &detail::decodeVCmpNgtF64Vop3,
-    &detail::decodeVCmpNleF64Vop3,
-    &detail::decodeVCmpNeqF64Vop3,
-    &detail::decodeVCmpNltF64Vop3,
-    &detail::decodeVCmpTruF64Vop3,
-    &detail::decodeVCmpxFF64Vop3,
-    &detail::decodeVCmpxLtF64Vop3,
-    &detail::decodeVCmpxEqF64Vop3,
-    &detail::decodeVCmpxLeF64Vop3,
-    &detail::decodeVCmpxGtF64Vop3,
-    &detail::decodeVCmpxLgF64Vop3,
-    &detail::decodeVCmpxGeF64Vop3,
-    &detail::decodeVCmpxOF64Vop3,
-    &detail::decodeVCmpxUF64Vop3,
-    &detail::decodeVCmpxNgeF64Vop3,
-    &detail::decodeVCmpxNlgF64Vop3,
-    &detail::decodeVCmpxNgtF64Vop3,
-    &detail::decodeVCmpxNleF64Vop3,
-    &detail::decodeVCmpxNeqF64Vop3,
-    &detail::decodeVCmpxNltF64Vop3,
-    &detail::decodeVCmpxTruF64Vop3,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVCmpFI32Vop3,
-    &detail::decodeVCmpLtI32Vop3,
-    &detail::decodeVCmpEqI32Vop3,
-    &detail::decodeVCmpLeI32Vop3,
-    &detail::decodeVCmpGtI32Vop3,
-    &detail::decodeVCmpNeI32Vop3,
-    &detail::decodeVCmpGeI32Vop3,
-    &detail::decodeVCmpTI32Vop3,
-    &detail::decodeVCmpClassF32Vop3,
-    &detail::decodeVCmpLtI16Vop3,
-    &detail::decodeVCmpEqI16Vop3,
-    &detail::decodeVCmpLeI16Vop3,
-    &detail::decodeVCmpGtI16Vop3,
-    &detail::decodeVCmpNeI16Vop3,
-    &detail::decodeVCmpGeI16Vop3,
-    &detail::decodeVCmpClassF16Vop3,
-    &detail::decodeVCmpxFI32Vop3,
-    &detail::decodeVCmpxLtI32Vop3,
-    &detail::decodeVCmpxEqI32Vop3,
-    &detail::decodeVCmpxLeI32Vop3,
-    &detail::decodeVCmpxGtI32Vop3,
-    &detail::decodeVCmpxNeI32Vop3,
-    &detail::decodeVCmpxGeI32Vop3,
-    &detail::decodeVCmpxTI32Vop3,
-    &detail::decodeVCmpxClassF32Vop3,
-    &detail::decodeVCmpxLtI16Vop3,
-    &detail::decodeVCmpxEqI16Vop3,
-    &detail::decodeVCmpxLeI16Vop3,
-    &detail::decodeVCmpxGtI16Vop3,
-    &detail::decodeVCmpxNeI16Vop3,
-    &detail::decodeVCmpxGeI16Vop3,
-    &detail::decodeVCmpxClassF16Vop3,
-    &detail::decodeVCmpFI64Vop3,
-    &detail::decodeVCmpLtI64Vop3,
-    &detail::decodeVCmpEqI64Vop3,
-    &detail::decodeVCmpLeI64Vop3,
-    &detail::decodeVCmpGtI64Vop3,
-    &detail::decodeVCmpNeI64Vop3,
-    &detail::decodeVCmpGeI64Vop3,
-    &detail::decodeVCmpTI64Vop3,
-    &detail::decodeVCmpClassF64Vop3,
-    &detail::decodeVCmpLtU16Vop3,
-    &detail::decodeVCmpEqU16Vop3,
-    &detail::decodeVCmpLeU16Vop3,
-    &detail::decodeVCmpGtU16Vop3,
-    &detail::decodeVCmpNeU16Vop3,
-    &detail::decodeVCmpGeU16Vop3,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVCmpxFI64Vop3,
-    &detail::decodeVCmpxLtI64Vop3,
-    &detail::decodeVCmpxEqI64Vop3,
-    &detail::decodeVCmpxLeI64Vop3,
-    &detail::decodeVCmpxGtI64Vop3,
-    &detail::decodeVCmpxNeI64Vop3,
-    &detail::decodeVCmpxGeI64Vop3,
-    &detail::decodeVCmpxTI64Vop3,
-    &detail::decodeVCmpxClassF64Vop3,
-    &detail::decodeVCmpxLtU16Vop3,
-    &detail::decodeVCmpxEqU16Vop3,
-    &detail::decodeVCmpxLeU16Vop3,
-    &detail::decodeVCmpxGtU16Vop3,
-    &detail::decodeVCmpxNeU16Vop3,
-    &detail::decodeVCmpxGeU16Vop3,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVCmpFU32Vop3,
-    &detail::decodeVCmpLtU32Vop3,
-    &detail::decodeVCmpEqU32Vop3,
-    &detail::decodeVCmpLeU32Vop3,
-    &detail::decodeVCmpGtU32Vop3,
-    &detail::decodeVCmpNeU32Vop3,
-    &detail::decodeVCmpGeU32Vop3,
-    &detail::decodeVCmpTU32Vop3,
-    &detail::decodeVCmpFF16Vop3,
-    &detail::decodeVCmpLtF16Vop3,
-    &detail::decodeVCmpEqF16Vop3,
-    &detail::decodeVCmpLeF16Vop3,
-    &detail::decodeVCmpGtF16Vop3,
-    &detail::decodeVCmpLgF16Vop3,
-    &detail::decodeVCmpGeF16Vop3,
-    &detail::decodeVCmpOF16Vop3,
-    &detail::decodeVCmpxFU32Vop3,
-    &detail::decodeVCmpxLtU32Vop3,
-    &detail::decodeVCmpxEqU32Vop3,
-    &detail::decodeVCmpxLeU32Vop3,
-    &detail::decodeVCmpxGtU32Vop3,
-    &detail::decodeVCmpxNeU32Vop3,
-    &detail::decodeVCmpxGeU32Vop3,
-    &detail::decodeVCmpxTU32Vop3,
-    &detail::decodeVCmpxFF16Vop3,
-    &detail::decodeVCmpxLtF16Vop3,
-    &detail::decodeVCmpxEqF16Vop3,
-    &detail::decodeVCmpxLeF16Vop3,
-    &detail::decodeVCmpxGtF16Vop3,
-    &detail::decodeVCmpxLgF16Vop3,
-    &detail::decodeVCmpxGeF16Vop3,
-    &detail::decodeVCmpxOF16Vop3,
-    &detail::decodeVCmpFU64Vop3,
-    &detail::decodeVCmpLtU64Vop3,
-    &detail::decodeVCmpEqU64Vop3,
-    &detail::decodeVCmpLeU64Vop3,
-    &detail::decodeVCmpGtU64Vop3,
-    &detail::decodeVCmpNeU64Vop3,
-    &detail::decodeVCmpGeU64Vop3,
-    &detail::decodeVCmpTU64Vop3,
-    &detail::decodeVCmpUF16Vop3,
-    &detail::decodeVCmpNgeF16Vop3,
-    &detail::decodeVCmpNlgF16Vop3,
-    &detail::decodeVCmpNgtF16Vop3,
-    &detail::decodeVCmpNleF16Vop3,
-    &detail::decodeVCmpNeqF16Vop3,
-    &detail::decodeVCmpNltF16Vop3,
-    &detail::decodeVCmpTruF16Vop3,
-    &detail::decodeVCmpxFU64Vop3,
-    &detail::decodeVCmpxLtU64Vop3,
-    &detail::decodeVCmpxEqU64Vop3,
-    &detail::decodeVCmpxLeU64Vop3,
-    &detail::decodeVCmpxGtU64Vop3,
-    &detail::decodeVCmpxNeU64Vop3,
-    &detail::decodeVCmpxGeU64Vop3,
-    &detail::decodeVCmpxTU64Vop3,
-    &detail::decodeVCmpxUF16Vop3,
-    &detail::decodeVCmpxNgeF16Vop3,
-    &detail::decodeVCmpxNlgF16Vop3,
-    &detail::decodeVCmpxNgtF16Vop3,
-    &detail::decodeVCmpxNleF16Vop3,
-    &detail::decodeVCmpxNeqF16Vop3,
-    &detail::decodeVCmpxNltF16Vop3,
-    &detail::decodeVCmpxTruF16Vop3,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVCndmaskB32Vop3,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVAddF32Vop3,
-    &detail::decodeVSubF32Vop3,
-    &detail::decodeVSubrevF32Vop3,
-    &detail::decodeVFmacLegacyF32Vop3,
-    &detail::decodeVMulLegacyF32Vop3,
-    &detail::decodeVMulF32Vop3,
-    &detail::decodeVMulI32I24Vop3,
-    &detail::decodeVMulHiI32I24Vop3,
-    &detail::decodeVMulU32U24Vop3,
-    &detail::decodeVMulHiU32U24Vop3,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVMinF32Vop3,
-    &detail::decodeVMaxF32Vop3,
-    &detail::decodeVMinI32Vop3,
-    &detail::decodeVMaxI32Vop3,
-    &detail::decodeVMinU32Vop3,
-    &detail::decodeVMaxU32Vop3,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVLshrrevB32Vop3,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVAshrrevI32Vop3,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVLshlrevB32Vop3,
-    &detail::decodeVAndB32Vop3,
-    &detail::decodeVOrB32Vop3,
-    &detail::decodeVXorB32Vop3,
-    &detail::decodeVXnorB32Vop3,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVAddNcU32Vop3,
-    &detail::decodeVSubNcU32Vop3,
-    &detail::decodeVSubrevNcU32Vop3,
-    &detail::decodeVAddCoCiU32Vop3SdstEnc,
-    &detail::decodeVSubCoCiU32Vop3SdstEnc,
-    &detail::decodeVSubrevCoCiU32Vop3SdstEnc,
-    &detail::decodeVFmacF32Vop3,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVCvtPkrtzF16F32Vop3,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVAddF16Vop3,
-    &detail::decodeVSubF16Vop3,
-    &detail::decodeVSubrevF16Vop3,
-    &detail::decodeVMulF16Vop3,
-    &detail::decodeVFmacF16Vop3,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVMaxF16Vop3,
-    &detail::decodeVMinF16Vop3,
-    &detail::decodeVLdexpF16Vop3,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVFmaLegacyF32Vop3,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVMadI32I24Vop3,
-    &detail::decodeVMadU32U24Vop3,
-    &detail::decodeVCubeidF32Vop3,
-    &detail::decodeVCubescF32Vop3,
-    &detail::decodeVCubetcF32Vop3,
-    &detail::decodeVCubemaF32Vop3,
-    &detail::decodeVBfeU32Vop3,
-    &detail::decodeVBfeI32Vop3,
-    &detail::decodeVBfiB32Vop3,
-    &detail::decodeVFmaF32Vop3,
-    &detail::decodeVFmaF64Vop3,
-    &detail::decodeVLerpU8Vop3,
-    &detail::decodeVAlignbitB32Vop3,
-    &detail::decodeVAlignbyteB32Vop3,
-    &detail::decodeVMullitF32Vop3,
-    &detail::decodeVMin3F32Vop3,
-    &detail::decodeVMin3I32Vop3,
-    &detail::decodeVMin3U32Vop3,
-    &detail::decodeVMax3F32Vop3,
-    &detail::decodeVMax3I32Vop3,
-    &detail::decodeVMax3U32Vop3,
-    &detail::decodeVMed3F32Vop3,
-    &detail::decodeVMed3I32Vop3,
-    &detail::decodeVMed3U32Vop3,
-    &detail::decodeVSadU8Vop3,
-    &detail::decodeVSadHiU8Vop3,
-    &detail::decodeVSadU16Vop3,
-    &detail::decodeVSadU32Vop3,
-    &detail::decodeVCvtPkU8F32Vop3,
-    &detail::decodeVDivFixupF32Vop3,
-    &detail::decodeVDivFixupF64Vop3,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVAddF64Vop3,
-    &detail::decodeVMulF64Vop3,
-    &detail::decodeVMinF64Vop3,
-    &detail::decodeVMaxF64Vop3,
-    &detail::decodeVLdexpF64Vop3,
-    &detail::decodeVMulLoU32Vop3,
-    &detail::decodeVMulHiU32Vop3,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVMulHiI32Vop3,
-    &detail::decodeVDivScaleF32Vop3SdstEnc,
-    &detail::decodeVDivScaleF64Vop3SdstEnc,
-    &detail::decodeVDivFmasF32Vop3,
-    &detail::decodeVDivFmasF64Vop3,
-    &detail::decodeVMsadU8Vop3,
-    &detail::decodeVQsadPkU16U8Vop3,
-    &detail::decodeVMqsadPkU16U8Vop3,
-    &detail::decodeVTrigPreopF64Vop3,
-    &detail::decodeVMqsadU32U8Vop3,
-    &detail::decodeVMadU64U32Vop3SdstEnc,
-    &detail::decodeVMadI64I32Vop3SdstEnc,
-    &detail::decodeVXor3B32Vop3,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVNopVop3,
-    &detail::decodeVMovB32Vop3,
-    &detail::decodeVReadfirstlaneB32Vop3,
-    &detail::decodeVCvtI32F64Vop3,
-    &detail::decodeVCvtF64I32Vop3,
-    &detail::decodeVCvtF32I32Vop3,
-    &detail::decodeVCvtF32U32Vop3,
-    &detail::decodeVCvtU32F32Vop3,
-    &detail::decodeVCvtI32F32Vop3,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVCvtF16F32Vop3,
-    &detail::decodeVCvtF32F16Vop3,
-    &detail::decodeVCvtRpiI32F32Vop3,
-    &detail::decodeVCvtFlrI32F32Vop3,
-    &detail::decodeVCvtOffF32I4Vop3,
-    &detail::decodeVCvtF32F64Vop3,
-    &detail::decodeVCvtF64F32Vop3,
-    &detail::decodeVCvtF32Ubyte0Vop3,
-    &detail::decodeVCvtF32Ubyte1Vop3,
-    &detail::decodeVCvtF32Ubyte2Vop3,
-    &detail::decodeVCvtF32Ubyte3Vop3,
-    &detail::decodeVCvtU32F64Vop3,
-    &detail::decodeVCvtF64U32Vop3,
-    &detail::decodeVTruncF64Vop3,
-    &detail::decodeVCeilF64Vop3,
-    &detail::decodeVRndneF64Vop3,
-    &detail::decodeVFloorF64Vop3,
-    &detail::decodeVPipeflushVop3,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVFractF32Vop3,
-    &detail::decodeVTruncF32Vop3,
-    &detail::decodeVCeilF32Vop3,
-    &detail::decodeVRndneF32Vop3,
-    &detail::decodeVFloorF32Vop3,
-    &detail::decodeVExpF32Vop3,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVLogF32Vop3,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVRcpF32Vop3,
-    &detail::decodeVRcpIflagF32Vop3,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVRsqF32Vop3,
-    &detail::decodeVRcpF64Vop3,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVRsqF64Vop3,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVSqrtF32Vop3,
-    &detail::decodeVSqrtF64Vop3,
-    &detail::decodeVSinF32Vop3,
-    &detail::decodeVCosF32Vop3,
-    &detail::decodeVNotB32Vop3,
-    &detail::decodeVBfrevB32Vop3,
-    &detail::decodeVFfbhU32Vop3,
-    &detail::decodeVFfblB32Vop3,
-    &detail::decodeVFfbhI32Vop3,
-    &detail::decodeVFrexpExpI32F64Vop3,
-    &detail::decodeVFrexpMantF64Vop3,
-    &detail::decodeVFractF64Vop3,
-    &detail::decodeVFrexpExpI32F32Vop3,
-    &detail::decodeVFrexpMantF32Vop3,
-    &detail::decodeVClrexcpVop3,
-    &detail::decodeVMovreldB32Vop3,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVCvtF16U16Vop3,
-    &detail::decodeVCvtF16I16Vop3,
-    &detail::decodeVCvtU16F16Vop3,
-    &detail::decodeVCvtI16F16Vop3,
-    &detail::decodeVRcpF16Vop3,
-    &detail::decodeVSqrtF16Vop3,
-    &detail::decodeVRsqF16Vop3,
-    &detail::decodeVLogF16Vop3,
-    &detail::decodeVExpF16Vop3,
-    &detail::decodeVFrexpMantF16Vop3,
-    &detail::decodeVFrexpExpI16F16Vop3,
-    &detail::decodeVFloorF16Vop3,
-    &detail::decodeVCeilF16Vop3,
-    &detail::decodeVTruncF16Vop3,
-    &detail::decodeVRndneF16Vop3,
-    &detail::decodeVFractF16Vop3,
-    &detail::decodeVSinF16Vop3,
-    &detail::decodeVCosF16Vop3,
-    &detail::decodeVSatPkU8I16Vop3,
-    &detail::decodeVCvtNormI16F16Vop3,
-    &detail::decodeVCvtNormU16F16Vop3,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVInterpP1F32Vop3,
-    &detail::decodeVInterpP2F32Vop3,
-    &detail::decodeVInterpMovF32Vop3,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVLshlrevB64Vop3,
-    &detail::decodeVLshrrevB64Vop3,
-    &detail::decodeVAshrrevI64Vop3,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVAddNcU16Vop3,
-    &detail::decodeVSubNcU16Vop3,
-    &detail::decodeVMulLoU16Vop3,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVLshrrevB16Vop3,
-    &detail::decodeVAshrrevI16Vop3,
-    &detail::decodeVMaxU16Vop3,
-    &detail::decodeVMaxI16Vop3,
-    &detail::decodeVMinU16Vop3,
-    &detail::decodeVMinI16Vop3,
-    &detail::decodeVAddNcI16Vop3,
-    &detail::decodeVSubNcI16Vop3,
-    &detail::decodeVAddCoU32Vop3SdstEnc,
-    &detail::decodeVSubCoU32Vop3SdstEnc,
-    &detail::decodeVPackB32F16Vop3,
-    &detail::decodeVCvtPknormI16F16Vop3,
-    &detail::decodeVCvtPknormU16F16Vop3,
-    &detail::decodeVLshlrevB16Vop3,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVSubrevCoU32Vop3SdstEnc,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVMadU16Vop3,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVInterpP1llF16Vop3,
-    &detail::decodeVInterpP1lvF16Vop3,
-    &detail::decodeVPermB32Vop3,
-    &detail::decodeVXadU32Vop3,
-    &detail::decodeVLshlAddU32Vop3,
-    &detail::decodeVAddLshlU32Vop3,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVFmaF16Vop3,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVMin3F16Vop3,
-    &detail::decodeVMin3I16Vop3,
-    &detail::decodeVMin3U16Vop3,
-    &detail::decodeVMax3F16Vop3,
-    &detail::decodeVMax3I16Vop3,
-    &detail::decodeVMax3U16Vop3,
-    &detail::decodeVMed3F16Vop3,
-    &detail::decodeVMed3I16Vop3,
-    &detail::decodeVMed3U16Vop3,
-    &detail::decodeVInterpP2F16Vop3,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVMadI16Vop3,
-    &detail::decodeVDivFixupF16Vop3,
-    &detail::decodeVReadlaneB32Vop3,
-    &detail::decodeVWritelaneB32Vop3,
-    &detail::decodeVLdexpF32Vop3,
-    &detail::decodeVBfmB32Vop3,
-    &detail::decodeVBcntU32B32Vop3,
-    &detail::decodeVMbcntLoU32B32Vop3,
-    &detail::decodeVMbcntHiU32B32Vop3,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVCvtPknormI16F32Vop3,
-    &detail::decodeVCvtPknormU16F32Vop3,
-    &detail::decodeVCvtPkU16U32Vop3,
-    &detail::decodeVCvtPkI16I32Vop3,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVAdd3U32Vop3,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVLshlOrB32Vop3,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVAndOrB32Vop3,
-    &detail::decodeVOr3B32Vop3,
-    &detail::decodeVMadU32U16Vop3,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVMadI32I16Vop3,
-    &detail::decodeVSubNcI32Vop3,
-    &detail::decodeVPermlane16B32Vop3,
-    &detail::decodeVPermlanex16B32Vop3,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeVAddNcI32Vop3,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-
-};
-
-const std::array<DecoderImpl::DecodeFunc, 256> DecoderImpl::sub_decode_ds = {
-
-    &detail::decodeDsAddU32Ds,
-    &detail::decodeDsSubU32Ds,
-    &detail::decodeDsRsubU32Ds,
-    &detail::decodeDsIncU32Ds,
-    &detail::decodeDsDecU32Ds,
-    &detail::decodeDsMinI32Ds,
-    &detail::decodeDsMaxI32Ds,
-    &detail::decodeDsMinU32Ds,
-    &detail::decodeDsMaxU32Ds,
-    &detail::decodeDsAndB32Ds,
-    &detail::decodeDsOrB32Ds,
-    &detail::decodeDsXorB32Ds,
-    &detail::decodeDsMskorB32Ds,
-    &detail::decodeDsWriteB32Ds,
-    &detail::decodeDsWrite2B32Ds,
-    &detail::decodeDsWrite2st64B32Ds,
-    &detail::decodeDsCmpstB32Ds,
-    &detail::decodeDsCmpstF32Ds,
-    &detail::decodeDsMinF32Ds,
-    &detail::decodeDsMaxF32Ds,
-    &detail::decodeDsNopDs,
-    &detail::decodeDsAddF32Ds,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeDsGwsSemaReleaseAllDs,
-    &detail::decodeDsGwsInitDs,
-    &detail::decodeDsGwsSemaVDs,
-    &detail::decodeDsGwsSemaBrDs,
-    &detail::decodeDsGwsSemaPDs,
-    &detail::decodeDsGwsBarrierDs,
-    &detail::decodeDsWriteB8Ds,
-    &detail::decodeDsWriteB16Ds,
-    &detail::decodeDsAddRtnU32Ds,
-    &detail::decodeDsSubRtnU32Ds,
-    &detail::decodeDsRsubRtnU32Ds,
-    &detail::decodeDsIncRtnU32Ds,
-    &detail::decodeDsDecRtnU32Ds,
-    &detail::decodeDsMinRtnI32Ds,
-    &detail::decodeDsMaxRtnI32Ds,
-    &detail::decodeDsMinRtnU32Ds,
-    &detail::decodeDsMaxRtnU32Ds,
-    &detail::decodeDsAndRtnB32Ds,
-    &detail::decodeDsOrRtnB32Ds,
-    &detail::decodeDsXorRtnB32Ds,
-    &detail::decodeDsMskorRtnB32Ds,
-    &detail::decodeDsWrxchgRtnB32Ds,
-    &detail::decodeDsWrxchg2RtnB32Ds,
-    &detail::decodeDsWrxchg2st64RtnB32Ds,
-    &detail::decodeDsCmpstRtnB32Ds,
-    &detail::decodeDsCmpstRtnF32Ds,
-    &detail::decodeDsMinRtnF32Ds,
-    &detail::decodeDsMaxRtnF32Ds,
-    &detail::decodeDsWrapRtnB32Ds,
-    &detail::decodeDsSwizzleB32Ds,
-    &detail::decodeDsReadB32Ds,
-    &detail::decodeDsRead2B32Ds,
-    &detail::decodeDsRead2st64B32Ds,
-    &detail::decodeDsReadI8Ds,
-    &detail::decodeDsReadU8Ds,
-    &detail::decodeDsReadI16Ds,
-    &detail::decodeDsReadU16Ds,
-    &detail::decodeDsConsumeDs,
-    &detail::decodeDsAppendDs,
-    &detail::decodeDsOrderedCountDs,
-    &detail::decodeDsAddU64Ds,
-    &detail::decodeDsSubU64Ds,
-    &detail::decodeDsRsubU64Ds,
-    &detail::decodeDsIncU64Ds,
-    &detail::decodeDsDecU64Ds,
-    &detail::decodeDsMinI64Ds,
-    &detail::decodeDsMaxI64Ds,
-    &detail::decodeDsMinU64Ds,
-    &detail::decodeDsMaxU64Ds,
-    &detail::decodeDsAndB64Ds,
-    &detail::decodeDsOrB64Ds,
-    &detail::decodeDsXorB64Ds,
-    &detail::decodeDsMskorB64Ds,
-    &detail::decodeDsWriteB64Ds,
-    &detail::decodeDsWrite2B64Ds,
-    &detail::decodeDsWrite2st64B64Ds,
-    &detail::decodeDsCmpstB64Ds,
-    &detail::decodeDsCmpstF64Ds,
-    &detail::decodeDsMinF64Ds,
-    &detail::decodeDsMaxF64Ds,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeDsAddRtnF32Ds,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeDsAddRtnU64Ds,
-    &detail::decodeDsSubRtnU64Ds,
-    &detail::decodeDsRsubRtnU64Ds,
-    &detail::decodeDsIncRtnU64Ds,
-    &detail::decodeDsDecRtnU64Ds,
-    &detail::decodeDsMinRtnI64Ds,
-    &detail::decodeDsMaxRtnI64Ds,
-    &detail::decodeDsMinRtnU64Ds,
-    &detail::decodeDsMaxRtnU64Ds,
-    &detail::decodeDsAndRtnB64Ds,
-    &detail::decodeDsOrRtnB64Ds,
-    &detail::decodeDsXorRtnB64Ds,
-    &detail::decodeDsMskorRtnB64Ds,
-    &detail::decodeDsWrxchgRtnB64Ds,
-    &detail::decodeDsWrxchg2RtnB64Ds,
-    &detail::decodeDsWrxchg2st64RtnB64Ds,
-    &detail::decodeDsCmpstRtnB64Ds,
-    &detail::decodeDsCmpstRtnF64Ds,
-    &detail::decodeDsMinRtnF64Ds,
-    &detail::decodeDsMaxRtnF64Ds,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeDsReadB64Ds,
-    &detail::decodeDsRead2B64Ds,
-    &detail::decodeDsRead2st64B64Ds,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeDsCondxchg32RtnB64Ds,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeDsWriteB8D16HiDs,
-    &detail::decodeDsWriteB16D16HiDs,
-    &detail::decodeDsReadU8D16Ds,
-    &detail::decodeDsReadU8D16HiDs,
-    &detail::decodeDsReadI8D16Ds,
-    &detail::decodeDsReadI8D16HiDs,
-    &detail::decodeDsReadU16D16Ds,
-    &detail::decodeDsReadU16D16HiDs,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeDsWriteAddtidB32Ds,
-    &detail::decodeDsReadAddtidB32Ds,
-    &detail::decodeDsPermuteB32Ds,
-    &detail::decodeDsBpermuteB32Ds,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeDsWriteB96Ds,
-    &detail::decodeDsWriteB128Ds,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeDsReadB96Ds,
-    &detail::decodeDsReadB128Ds,
-
-};
-
-const std::array<DecoderImpl::DecodeFunc, 128> DecoderImpl::sub_decode_flat = {
-
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeFlatLoadUbyteFlat,
-    &detail::decodeFlatLoadSbyteFlat,
-    &detail::decodeFlatLoadUshortFlat,
-    &detail::decodeFlatLoadSshortFlat,
-    &detail::decodeFlatLoadDwordFlat,
-    &detail::decodeFlatLoadDwordx2Flat,
-    &detail::decodeFlatLoadDwordx4Flat,
-    &detail::decodeFlatLoadDwordx3Flat,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeGlobalLoadDwordAddtidFlat,
-    &detail::decodeGlobalStoreDwordAddtidFlat,
-    &detail::decodeFlatStoreByteFlat,
-    &detail::decodeFlatStoreByteD16HiFlat,
-    &detail::decodeFlatStoreShortFlat,
-    &detail::decodeFlatStoreShortD16HiFlat,
-    &detail::decodeFlatStoreDwordFlat,
-    &detail::decodeFlatStoreDwordx2Flat,
-    &detail::decodeFlatStoreDwordx4Flat,
-    &detail::decodeFlatStoreDwordx3Flat,
-    &detail::decodeFlatLoadUbyteD16Flat,
-    &detail::decodeFlatLoadUbyteD16HiFlat,
-    &detail::decodeFlatLoadSbyteD16Flat,
-    &detail::decodeFlatLoadSbyteD16HiFlat,
-    &detail::decodeFlatLoadShortD16Flat,
-    &detail::decodeFlatLoadShortD16HiFlat,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeFlatAtomicSwapFlat,
-    &detail::decodeFlatAtomicCmpswapFlat,
-    &detail::decodeFlatAtomicAddFlat,
-    &detail::decodeFlatAtomicSubFlat,
-    &detail::decodeGlobalAtomicCsubFlat,
-    &detail::decodeFlatAtomicSminFlat,
-    &detail::decodeFlatAtomicUminFlat,
-    &detail::decodeFlatAtomicSmaxFlat,
-    &detail::decodeFlatAtomicUmaxFlat,
-    &detail::decodeFlatAtomicAndFlat,
-    &detail::decodeFlatAtomicOrFlat,
-    &detail::decodeFlatAtomicXorFlat,
-    &detail::decodeFlatAtomicIncFlat,
-    &detail::decodeFlatAtomicDecFlat,
-    &detail::decodeFlatAtomicFcmpswapFlat,
-    &detail::decodeFlatAtomicFminFlat,
-    &detail::decodeFlatAtomicFmaxFlat,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeFlatAtomicSwapX2Flat,
-    &detail::decodeFlatAtomicCmpswapX2Flat,
-    &detail::decodeFlatAtomicAddX2Flat,
-    &detail::decodeFlatAtomicSubX2Flat,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeFlatAtomicSminX2Flat,
-    &detail::decodeFlatAtomicUminX2Flat,
-    &detail::decodeFlatAtomicSmaxX2Flat,
-    &detail::decodeFlatAtomicUmaxX2Flat,
-    &detail::decodeFlatAtomicAndX2Flat,
-    &detail::decodeFlatAtomicOrX2Flat,
-    &detail::decodeFlatAtomicXorX2Flat,
-    &detail::decodeFlatAtomicIncX2Flat,
-    &detail::decodeFlatAtomicDecX2Flat,
-    &detail::decodeFlatAtomicFcmpswapX2Flat,
-    &detail::decodeFlatAtomicFminX2Flat,
-    &detail::decodeFlatAtomicFmaxX2Flat,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-
-};
-
-const std::array<DecoderImpl::DecodeFunc, 256> DecoderImpl::sub_decode_mubuf = {
-
-    &detail::decodeBufferLoadFormatXMubuf,
-    &detail::decodeBufferLoadFormatXyMubuf,
-    &detail::decodeBufferLoadFormatXyzMubuf,
-    &detail::decodeBufferLoadFormatXyzwMubuf,
-    &detail::decodeBufferStoreFormatXMubuf,
-    &detail::decodeBufferStoreFormatXyMubuf,
-    &detail::decodeBufferStoreFormatXyzMubuf,
-    &detail::decodeBufferStoreFormatXyzwMubuf,
-    &detail::decodeBufferLoadUbyteMubuf,
-    &detail::decodeBufferLoadSbyteMubuf,
-    &detail::decodeBufferLoadUshortMubuf,
-    &detail::decodeBufferLoadSshortMubuf,
-    &detail::decodeBufferLoadDwordMubuf,
-    &detail::decodeBufferLoadDwordx2Mubuf,
-    &detail::decodeBufferLoadDwordx4Mubuf,
-    &detail::decodeBufferLoadDwordx3Mubuf,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeBufferStoreByteMubuf,
-    &detail::decodeBufferStoreByteD16HiMubuf,
-    &detail::decodeBufferStoreShortMubuf,
-    &detail::decodeBufferStoreShortD16HiMubuf,
-    &detail::decodeBufferStoreDwordMubuf,
-    &detail::decodeBufferStoreDwordx2Mubuf,
-    &detail::decodeBufferStoreDwordx4Mubuf,
-    &detail::decodeBufferStoreDwordx3Mubuf,
-    &detail::decodeBufferLoadUbyteD16Mubuf,
-    &detail::decodeBufferLoadUbyteD16HiMubuf,
-    &detail::decodeBufferLoadSbyteD16Mubuf,
-    &detail::decodeBufferLoadSbyteD16HiMubuf,
-    &detail::decodeBufferLoadShortD16Mubuf,
-    &detail::decodeBufferLoadShortD16HiMubuf,
-    &detail::decodeBufferLoadFormatD16HiXMubuf,
-    &detail::decodeBufferStoreFormatD16HiXMubuf,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeBufferAtomicSwapMubuf,
-    &detail::decodeBufferAtomicCmpswapMubuf,
-    &detail::decodeBufferAtomicAddMubuf,
-    &detail::decodeBufferAtomicSubMubuf,
-    &detail::decodeBufferAtomicCsubMubuf,
-    &detail::decodeBufferAtomicSminMubuf,
-    &detail::decodeBufferAtomicUminMubuf,
-    &detail::decodeBufferAtomicSmaxMubuf,
-    &detail::decodeBufferAtomicUmaxMubuf,
-    &detail::decodeBufferAtomicAndMubuf,
-    &detail::decodeBufferAtomicOrMubuf,
-    &detail::decodeBufferAtomicXorMubuf,
-    &detail::decodeBufferAtomicIncMubuf,
-    &detail::decodeBufferAtomicDecMubuf,
-    &detail::decodeBufferAtomicFcmpswapMubuf,
-    &detail::decodeBufferAtomicFminMubuf,
-    &detail::decodeBufferAtomicFmaxMubuf,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeBufferAtomicSwapX2Mubuf,
-    &detail::decodeBufferAtomicCmpswapX2Mubuf,
-    &detail::decodeBufferAtomicAddX2Mubuf,
-    &detail::decodeBufferAtomicSubX2Mubuf,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeBufferAtomicSminX2Mubuf,
-    &detail::decodeBufferAtomicUminX2Mubuf,
-    &detail::decodeBufferAtomicSmaxX2Mubuf,
-    &detail::decodeBufferAtomicUmaxX2Mubuf,
-    &detail::decodeBufferAtomicAndX2Mubuf,
-    &detail::decodeBufferAtomicOrX2Mubuf,
-    &detail::decodeBufferAtomicXorX2Mubuf,
-    &detail::decodeBufferAtomicIncX2Mubuf,
-    &detail::decodeBufferAtomicDecX2Mubuf,
-    &detail::decodeBufferAtomicFcmpswapX2Mubuf,
-    &detail::decodeBufferAtomicFminX2Mubuf,
-    &detail::decodeBufferAtomicFmaxX2Mubuf,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeBufferGl0InvMubuf,
-    &detail::decodeBufferGl1InvMubuf,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeBufferLoadFormatD16XMubuf,
-    &detail::decodeBufferLoadFormatD16XyMubuf,
-    &detail::decodeBufferLoadFormatD16XyzMubuf,
-    &detail::decodeBufferLoadFormatD16XyzwMubuf,
-    &detail::decodeBufferStoreFormatD16XMubuf,
-    &detail::decodeBufferStoreFormatD16XyMubuf,
-    &detail::decodeBufferStoreFormatD16XyzMubuf,
-    &detail::decodeBufferStoreFormatD16XyzwMubuf,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-
-};
-
-const std::array<DecoderImpl::DecodeFunc, 16> DecoderImpl::sub_decode_mtbuf = {
-
-    &detail::decodeTbufferLoadFormatXMtbuf,       &detail::decodeTbufferLoadFormatXyMtbuf,
-    &detail::decodeTbufferLoadFormatXyzMtbuf,     &detail::decodeTbufferLoadFormatXyzwMtbuf,
-    &detail::decodeTbufferStoreFormatXMtbuf,      &detail::decodeTbufferStoreFormatXyMtbuf,
-    &detail::decodeTbufferStoreFormatXyzMtbuf,    &detail::decodeTbufferStoreFormatXyzwMtbuf,
-    &detail::decodeTbufferLoadFormatD16XMtbuf,    &detail::decodeTbufferLoadFormatD16XyMtbuf,
-    &detail::decodeTbufferLoadFormatD16XyzMtbuf,  &detail::decodeTbufferLoadFormatD16XyzwMtbuf,
-    &detail::decodeTbufferStoreFormatD16XMtbuf,   &detail::decodeTbufferStoreFormatD16XyMtbuf,
-    &detail::decodeTbufferStoreFormatD16XyzMtbuf, &detail::decodeTbufferStoreFormatD16XyzwMtbuf,
-
-};
-
-const std::array<DecoderImpl::DecodeFunc, 256> DecoderImpl::sub_decode_mimg = {
-
-    &detail::decodeImageLoadMimg,
-    &detail::decodeImageLoadMipMimg,
-    &detail::decodeImageLoadPckMimg,
-    &detail::decodeImageLoadPckSgnMimg,
-    &detail::decodeImageLoadMipPckMimg,
-    &detail::decodeImageLoadMipPckSgnMimg,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeImageStoreMimg,
-    &detail::decodeImageStoreMipMimg,
-    &detail::decodeImageStorePckMimg,
-    &detail::decodeImageStoreMipPckMimg,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeImageGetResinfoMimg,
-    &detail::decodeImageAtomicSwapMimg,
-    &detail::decodeImageAtomicCmpswapMimg,
-    &detail::decodeImageAtomicAddMimg,
-    &detail::decodeImageAtomicSubMimg,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeImageAtomicSminMimg,
-    &detail::decodeImageAtomicUminMimg,
-    &detail::decodeImageAtomicSmaxMimg,
-    &detail::decodeImageAtomicUmaxMimg,
-    &detail::decodeImageAtomicAndMimg,
-    &detail::decodeImageAtomicOrMimg,
-    &detail::decodeImageAtomicXorMimg,
-    &detail::decodeImageAtomicIncMimg,
-    &detail::decodeImageAtomicDecMimg,
-    &detail::decodeImageAtomicFcmpswapMimg,
-    &detail::decodeImageAtomicFminMimg,
-    &detail::decodeImageAtomicFmaxMimg,
-    &detail::decodeImageSampleMimg,
-    &detail::decodeImageSampleClMimg,
-    &detail::decodeImageSampleDMimg,
-    &detail::decodeImageSampleDClMimg,
-    &detail::decodeImageSampleLMimg,
-    &detail::decodeImageSampleBMimg,
-    &detail::decodeImageSampleBClMimg,
-    &detail::decodeImageSampleLzMimg,
-    &detail::decodeImageSampleCMimg,
-    &detail::decodeImageSampleCClMimg,
-    &detail::decodeImageSampleCDMimg,
-    &detail::decodeImageSampleCDClMimg,
-    &detail::decodeImageSampleCLMimg,
-    &detail::decodeImageSampleCBMimg,
-    &detail::decodeImageSampleCBClMimg,
-    &detail::decodeImageSampleCLzMimg,
-    &detail::decodeImageSampleOMimg,
-    &detail::decodeImageSampleClOMimg,
-    &detail::decodeImageSampleDOMimg,
-    &detail::decodeImageSampleDClOMimg,
-    &detail::decodeImageSampleLOMimg,
-    &detail::decodeImageSampleBOMimg,
-    &detail::decodeImageSampleBClOMimg,
-    &detail::decodeImageSampleLzOMimg,
-    &detail::decodeImageSampleCOMimg,
-    &detail::decodeImageSampleCClOMimg,
-    &detail::decodeImageSampleCDOMimg,
-    &detail::decodeImageSampleCDClOMimg,
-    &detail::decodeImageSampleCLOMimg,
-    &detail::decodeImageSampleCBOMimg,
-    &detail::decodeImageSampleCBClOMimg,
-    &detail::decodeImageSampleCLzOMimg,
-    &detail::decodeImageGather4Mimg,
-    &detail::decodeImageGather4ClMimg,
-    &detail::decodeImageLoadBy2Mimg,
-    &detail::decodeImageLoadBy4Mimg,
-    &detail::decodeImageGather4LMimg,
-    &detail::decodeImageGather4BMimg,
-    &detail::decodeImageGather4BClMimg,
-    &detail::decodeImageGather4LzMimg,
-    &detail::decodeImageGather4CMimg,
-    &detail::decodeImageGather4CClMimg,
-    &detail::decodeImageLoadMipBy2Mimg,
-    &detail::decodeImageLoadMipBy4Mimg,
-    &detail::decodeImageGather4CLMimg,
-    &detail::decodeImageGather4CBMimg,
-    &detail::decodeImageGather4CBClMimg,
-    &detail::decodeImageGather4CLzMimg,
-    &detail::decodeImageGather4OMimg,
-    &detail::decodeImageGather4ClOMimg,
-    &detail::decodeImageStoreBy2Mimg,
-    &detail::decodeImageStoreBy4Mimg,
-    &detail::decodeImageGather4LOMimg,
-    &detail::decodeImageGather4BOMimg,
-    &detail::decodeImageGather4BClOMimg,
-    &detail::decodeImageGather4LzOMimg,
-    &detail::decodeImageGather4COMimg,
-    &detail::decodeImageGather4CClOMimg,
-    &detail::decodeImageStoreMipBy2Mimg,
-    &detail::decodeImageStoreMipBy4Mimg,
-    &detail::decodeImageGather4CLOMimg,
-    &detail::decodeImageGather4CBOMimg,
-    &detail::decodeImageGather4CBClOMimg,
-    &detail::decodeImageGather4CLzOMimg,
-    &detail::decodeImageGetLodMimg,
-    &detail::decodeImageGather4hMimg,
-    &detail::decodeImageGather4hPckMimg,
-    &detail::decodeImageGather8hPckMimg,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeImageSampleCdMimg,
-    &detail::decodeImageSampleCdClMimg,
-    &detail::decodeImageSampleCCdMimg,
-    &detail::decodeImageSampleCCdClMimg,
-    &detail::decodeImageSampleCdOMimg,
-    &detail::decodeImageSampleCdClOMimg,
-    &detail::decodeImageSampleCCdOMimg,
-    &detail::decodeImageSampleCCdClOMimg,
-    &detail::decodeImageLoadPck2Mimg,
-    &detail::decodeImageLoadPck4Mimg,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeImageLoadMipPck2Mimg,
-    &detail::decodeImageLoadMipPck4Mimg,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeImageStorePck2Mimg,
-    &detail::decodeImageStorePck4Mimg,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeImageStoreMipPck2Mimg,
-    &detail::decodeImageStoreMipPck4Mimg,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeImageMsaaLoadMimg,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeImageSampleDG16Mimg,
-    &detail::decodeImageSampleDClG16Mimg,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeImageSampleCDG16Mimg,
-    &detail::decodeImageSampleCDClG16Mimg,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeImageSampleDOG16Mimg,
-    &detail::decodeImageSampleDClOG16Mimg,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeImageSampleCDOG16Mimg,
-    &detail::decodeImageSampleCDClOG16Mimg,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeImageBvhIntersectRayMimg,
-    &detail::decodeImageBvh64IntersectRayMimg,
-    &detail::decodeImageSampleCdG16Mimg,
-    &detail::decodeImageSampleCdClG16Mimg,
-    &detail::decodeImageSampleCCdG16Mimg,
-    &detail::decodeImageSampleCCdClG16Mimg,
-    &detail::decodeImageSampleCdOG16Mimg,
-    &detail::decodeImageSampleCdClOG16Mimg,
-    &detail::decodeImageSampleCCdOG16Mimg,
-    &detail::decodeImageSampleCCdClOG16Mimg,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-
-};
-
-const std::array<DecoderImpl::DecodeFunc, 256> DecoderImpl::sub_decode_smem = {
-
-    &detail::decodeSLoadDwordSmem,
-    &detail::decodeSLoadDwordx2Smem,
-    &detail::decodeSLoadDwordx4Smem,
-    &detail::decodeSLoadDwordx8Smem,
-    &detail::decodeSLoadDwordx16Smem,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeSBufferLoadDwordSmem,
-    &detail::decodeSBufferLoadDwordx2Smem,
-    &detail::decodeSBufferLoadDwordx4Smem,
-    &detail::decodeSBufferLoadDwordx8Smem,
-    &detail::decodeSBufferLoadDwordx16Smem,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeSGl1InvSmem,
-    &detail::decodeSDcacheInvSmem,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &detail::decodeSMemtimeSmem,
-    &detail::decodeSMemrealtimeSmem,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-    &DecoderImpl::decodeInvalid,
-
-};
+  RJ_BEGIN_DECODE_TABLE(sub_decode_smem)
+  RJ_DECODE_RUN(0, 1, &detail::decodeSLoadDwordSmem);
+  RJ_DECODE_RUN(1, 1, &detail::decodeSLoadDwordx2Smem);
+  RJ_DECODE_RUN(2, 1, &detail::decodeSLoadDwordx4Smem);
+  RJ_DECODE_RUN(3, 1, &detail::decodeSLoadDwordx8Smem);
+  RJ_DECODE_RUN(4, 1, &detail::decodeSLoadDwordx16Smem);
+  RJ_DECODE_RUN(5, 3, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(8, 1, &detail::decodeSBufferLoadDwordSmem);
+  RJ_DECODE_RUN(9, 1, &detail::decodeSBufferLoadDwordx2Smem);
+  RJ_DECODE_RUN(10, 1, &detail::decodeSBufferLoadDwordx4Smem);
+  RJ_DECODE_RUN(11, 1, &detail::decodeSBufferLoadDwordx8Smem);
+  RJ_DECODE_RUN(12, 1, &detail::decodeSBufferLoadDwordx16Smem);
+  RJ_DECODE_RUN(13, 18, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(31, 1, &detail::decodeSGl1InvSmem);
+  RJ_DECODE_RUN(32, 1, &detail::decodeSDcacheInvSmem);
+  RJ_DECODE_RUN(33, 3, &DecoderImpl::decodeInvalid);
+  RJ_DECODE_RUN(36, 1, &detail::decodeSMemtimeSmem);
+  RJ_DECODE_RUN(37, 1, &detail::decodeSMemrealtimeSmem);
+  RJ_DECODE_RUN(38, 218, &DecoderImpl::decodeInvalid);
+  RJ_END_DECODE_TABLE()
+}
+#endif
 
 } // namespace rdna2
 } // namespace rocjitsu

@@ -783,7 +783,9 @@ def _parse_cdna_specs(*names: str):
     return specs
 
 
-def test_parser_separates_logical_arch_directory_and_cpp_namespace():
+def test_decoder_tables_follow_cpp_namespace_independently_of_output_directory(
+    tmp_path: Path,
+):
     class IdentityOverrideRdna4Profile(Rdna4Profile):
         @property
         def generated_dir_name(self) -> str:
@@ -794,11 +796,22 @@ def test_parser_separates_logical_arch_directory_and_cpp_namespace():
             return 'test_rdna4_namespace'
 
     isa_xml = _mrisa_dir() / 'amdgpu_isa_rdna4.xml'
-    spec = Parser(str(isa_xml), IdentityOverrideRdna4Profile()).isa_spec
+    spec = Parser(str(isa_xml), IdentityOverrideRdna4Profile()).parse()
 
     assert spec.arch_name == 'rdna4'
     assert spec.generated_dir_name == 'test_generated_rdna4'
     assert spec.cpp_namespace == 'test_rdna4_namespace'
+
+    semantics = derive_all_semantics(spec)
+    for namespace in ('test_rdna4_namespace', 'other_rdna4_namespace'):
+        spec.cpp_namespace = namespace
+        CodeGenerator(spec, str(tmp_path), semantics).gen_decoder()
+        decoder = (tmp_path / spec.generated_dir_name / 'decoder.cpp').read_text()
+        assert f'namespace {namespace} {{' in decoder
+        assert (
+            'static const amdgpu::DecodeTable<DecodeFunc, 512> primary_decode_table;'
+            in decoder
+        )
 
 
 @pytest.mark.parametrize(
@@ -1203,6 +1216,46 @@ def test_rdna4_parser_injects_s_waitcnt_compat():
     assert dte.sub_decode_funcs[9] == 'decodeSWaitcntSopp'
 
 
+def _decode_targets(decoder: str, table: str) -> list[str]:
+    body = decoder.split(f'RJ_BEGIN_DECODE_TABLE({table})', 1)[1].split(
+        'RJ_END_DECODE_TABLE()', 1
+    )[0]
+    targets = []
+    for first, count, target in re.findall(
+        r'RJ_DECODE_RUN\((\d+),\s*(\d+),\s*(&[\w:]+)\)', body
+    ):
+        assert int(first) == len(targets)
+        targets.extend([target] * int(count))
+    return targets
+
+
+def test_portable_decode_switches_match_relative_tables(amdgpu_generated_root: Path):
+    for source in sorted(amdgpu_generated_root.glob('*/decoder.cpp')):
+        decoder = source.read_text()
+        tables = re.findall(r'RJ_BEGIN_DECODE_TABLE\((\w+)\)', decoder)
+        assert tables, source
+        for table in tables:
+            targets = _decode_targets(decoder, table)
+            dispatch = decoder.split(f'return {table}[', 1)[1].split('#endif', 1)[0]
+            switch = dispatch.split('#else', 1)[1]
+            cases = {}
+            default = None
+            for labels, target in re.findall(
+                r'((?:(?:case \d+|default):\s*)+)return\s+([\w:]+)'
+                r'\(\s*opcode,\s*emit_error\s*\);',
+                switch,
+            ):
+                if 'default:' in labels:
+                    default = '&' + target
+                for index in re.findall(r'case (\d+):', labels):
+                    cases[int(index)] = '&' + target
+            assert default is not None, (source, table)
+            assert [cases.get(i, default) for i in range(len(targets))] == targets, (
+                source,
+                table,
+            )
+
+
 def test_gfx1250_generated_inventory_omits_legacy_s_waitcnt(
     gfx1250_generated_root: Path,
 ):
@@ -1210,13 +1263,9 @@ def test_gfx1250_generated_inventory_omits_legacy_s_waitcnt(
     decoder = (gfx1250_generated_root / 'decoder.cpp').read_text()
 
     assert 'kSWaitcntSopp' not in opcodes
-    table_start = decoder.index('DecoderImpl::sub_decode_sopp = {')
-    table_end = decoder.index('\n};', table_start)
-    decode_targets = re.findall(
-        r'&(detail|DecoderImpl)::([A-Za-z0-9_]+)',
-        decoder[table_start:table_end],
+    assert (
+        _decode_targets(decoder, 'sub_decode_sopp')[9] == '&DecoderImpl::decodeInvalid'
     )
-    assert decode_targets[9] == ('DecoderImpl', 'decodeInvalid')
 
 
 def _fake_sopp_parser(arch_name: str, *, sub_decode_funcs: list[str | None] | None):
@@ -7396,7 +7445,12 @@ def test_gfx1250_helper_blocks_emit_scaled_wmma_table_decoder(
         'const DecodeErrorEmitter &emit_error) {'
     )[1].split('DecodeResult DecoderImpl::decodeInvalid', 1)[0]
     assert 'isWmmaScaleF32Vop3px2' not in decode_body
-    assert decoder.count('&DecoderImpl::decodeVWmmaScaleF32Vop3px2,') == 2
+    assert (
+        _decode_targets(decoder, 'sub_decode_vop3p').count(
+            '&DecoderImpl::decodeVWmmaScaleF32Vop3px2'
+        )
+        == 2
+    )
     assert 'if (!isVop3pOp(opcode[2], 0x33)' in decoder
     assert 'if (!isGfx1250WmmaScalePairValid(opcode))' in decoder
 
@@ -7551,12 +7605,7 @@ def test_vopd_dispatch_uses_primary_decode_table(
     )[1].split('DecodeResult DecoderImpl::decodeInvalid', 1)[0]
 
     assert 'Vopd::is_vopd' not in decode_body
-    primary_table = decoder.split('DecoderImpl::primary_decode_table = {', 1)[1].split(
-        '\n};', 1
-    )[0]
-    primary_entries = re.findall(
-        r'&(?:DecoderImpl|detail)::[A-Za-z0-9_]+', primary_table
-    )
+    primary_entries = _decode_targets(decoder, 'primary_decode_table')
     assert len(primary_entries) == 512
     actual_vopd_indices = {
         index

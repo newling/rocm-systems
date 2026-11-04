@@ -1161,6 +1161,16 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     )
     rj_configure_target(rocjitsu_model_only_test TEST)
     rj_add_gtest_tests(rocjitsu_model_only_test)
+    if(CMAKE_EXECUTABLE_FORMAT STREQUAL "ELF" AND CMAKE_NM AND CMAKE_READELF)
+        add_test(
+            NAME ModelOnlyIsaTest.DecodeTableLayout
+            COMMAND
+                ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/check_relative_decode_table.py
+                ${CMAKE_NM} ${CMAKE_READELF}
+                $<TARGET_FILE:rocjitsu_model_only_test>
+        )
+    endif()
     add_test(
         NAME ModelOnlyIsaTest.SymbolBoundary
         COMMAND
