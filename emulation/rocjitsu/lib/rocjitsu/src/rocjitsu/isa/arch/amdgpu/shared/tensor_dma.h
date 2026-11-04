@@ -508,8 +508,9 @@ inline uint64_t tensor_dma_lds_allocation_end(const Wavefront &wf) {
 /// The bound is the allocation rocjitsu dispatches, wf.lds_size(), which the dispatcher rounds up
 /// to 256 bytes. CDNA5 ISA 3.3.4 specifies a 2048-byte allocation granularity, so hardware likely
 /// owns bytes past this bound that are dropped here; this is inferred from the ISA, not measured on
-/// hardware. The same dispatch granularity also bounds DS and FLAT accesses and is tracked
-/// separately.
+/// hardware. rocjitsu applies the same wf.lds_size() bound to gfx1250 async loads to LDS and to
+/// RDNA4 FLAT LDS accesses; ordinary DS accesses are bounded only by the CU's LDS backing, so a DS
+/// store past the allocation still writes LDS.
 /// Requiring the atomic-barrier cell to lie within the allocation is simulator validation, not a
 /// rule of that section. allocation_end is tensor_dma_lds_allocation_end(wf).
 inline bool validate_materialization_address_ranges(const TensorDmaDescriptor &desc,
@@ -593,6 +594,8 @@ inline void append_copy(TensorDmaState &state, Wavefront &wf, uint64_t lds_alloc
   // Ordinary LDS instructions follow a different rule (CDNA5 ISA 3.3.4.1): the range check is per
   // byte in UNALIGNED mode and per DWORD in DWORD mode, and a multi-DWORD load returns zero for
   // any DWORD that is partly out of range. The byte-prefix model is not derived from that rule.
+  // rocjitsu's gfx1250 async loads to LDS (cdna5::async_lds_lane_address) also differ: they drop a
+  // whole access that straddles the end of the allocation.
   const uint64_t lds_address = uint64_t{wf.lds_base()} + uint64_t{desc.lds_base} + lds_byte;
   const uint64_t lds_bytes =
       lds_address < lds_allocation_end
