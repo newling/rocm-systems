@@ -693,6 +693,20 @@ TEST_F(TensorDmaRaceTest, DtlAfterDscntIsSafe) {
   EXPECT_FALSE(dtl_write(0, 4));
 }
 
+// The same check applies to another wave's reads, which only a wait by the
+// reading wave followed by a barrier retires.
+TEST_F(TensorDmaRaceTest, DtlOverwritingAnotherWavesPendingDsReadRaces) {
+  EXPECT_FALSE(ds_read(1, 4));
+  EXPECT_TRUE(dtl_write(0, 4));
+}
+
+TEST_F(TensorDmaRaceTest, DtlAfterAnotherWavesDsReadIsRetiredIsSafe) {
+  EXPECT_FALSE(ds_read(1, 4));
+  wait_dscnt(1);
+  barrier();
+  EXPECT_FALSE(dtl_write(0, 4));
+}
+
 TEST_F(TensorDmaRaceTest, StoreAfterDscntIsSafe) {
   EXPECT_FALSE(ds_write(0, 4));
   wait_dscnt(0);
