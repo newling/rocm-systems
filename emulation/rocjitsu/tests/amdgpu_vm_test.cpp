@@ -10169,6 +10169,51 @@ INSTANTIATE_TEST_SUITE_P(FailureKinds, AqlQueueFailureConcurrencyTest, testing::
                            return info.param ? "VmFault" : "InstructionFailure";
                          });
 
+// An internal queue releases its engine primary only from the doorbell
+// handler. A dispatch fault reported from a CU notification removes the last
+// entry outside that handler, so the CP must revisit its teardown check. A
+// finite run would otherwise stop as a primary stall, and an unlimited run
+// would wait forever.
+TEST(CommandProcessorTest, DispatchFaultReleasesInternalQueuePrimary) {
+  for (const uint64_t max_ticks : {uint64_t{10000}, uint64_t{0}}) {
+    SCOPED_TRACE(::testing::Message() << "max_ticks=" << max_ticks);
+    VmFixture fixture;
+    ASSERT_NO_FATAL_FAILURE(fixture.initialize("cdna4", 1, 10, 64, 104, 256, 1, max_ticks));
+    std::array<uint32_t, 33> code;
+    code.fill(SOPP_S_NOP);
+    code.back() = SOPP_S_ENDPGM;
+    const uint64_t kernel = fixture.write_kernel(0x1000, code.data(), sizeof(code));
+    constexpr uint64_t kSignal = 0x3000;
+    init_completion_signal(fixture.mem(), kSignal);
+
+    test::AqlQueue queue(fixture.mem(), fixture.cp());
+    queue.submit(make_dispatch_packet(kernel, kSignal, 32, 32));
+    ASSERT_TRUE(fixture.engine->step());
+    ASSERT_NE(fixture.cu()->wf(0), nullptr);
+    const uint32_t dispatch_id = fixture.cu()->wf(0)->dispatch_id();
+
+    bool reported = false;
+    fixture.cu()->set_notification_flush_hook_for_testing([&] {
+      if (std::exchange(reported, true))
+        return;
+      fixture.cp()->notify_dispatch_vm_fault(1, 0, dispatch_id, amdgpu::VmAccessOutcome::Faulted);
+    });
+
+    // An unlimited step loop polls forever while a primary stays registered.
+    bool running = true;
+    for (unsigned step = 0; running && step < 1000; ++step)
+      running = fixture.engine->step();
+    ASSERT_FALSE(running) << "the faulted queue kept its engine primary alive";
+    const simdojo::ExitStatus &exit = fixture.engine->last_exit();
+    EXPECT_TRUE(reported);
+    EXPECT_TRUE(fixture.cp()->queue_faulted_for_test(1, 0));
+    EXPECT_FALSE(fixture.cp()->has_dispatch_for_test(1, 0, dispatch_id));
+    EXPECT_EQ(completion_signal_value(fixture.mem(), kSignal), 1);
+    EXPECT_EQ(exit.reason, simdojo::ExitReason::COMPLETED);
+    EXPECT_EQ(exit.cause, simdojo::ExitCause::ALL_PRIMARIES_COMPLETED);
+  }
+}
+
 TEST(AqlDispatchTest, WorkerExceptionLeavesQueueFailureForTeardown) {
   for (bool close_queue : {false, true}) {
     SCOPED_TRACE(close_queue ? "close" : "shutdown");
