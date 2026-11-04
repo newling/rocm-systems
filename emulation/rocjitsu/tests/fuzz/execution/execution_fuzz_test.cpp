@@ -273,6 +273,30 @@ TEST(ExecutionFuzzInputTest, WaitCheckingBitEnablesDiagnosticsOnReplay) {
   }
 }
 
+TEST(ExecutionFuzzInputTest, HarnessBitsPreserveInitialScalarCondition) {
+  for (uint8_t marker = 0; marker < 64; ++marker) {
+    std::vector<uint8_t> input{static_cast<uint8_t>(FuzzTarget::Gfx1250), 0};
+    const auto append = [&](auto words) {
+      for (const uint32_t word : words)
+        for (unsigned byte = 0; byte < sizeof(word); ++byte)
+          input.push_back(static_cast<uint8_t>(word >> (8 * byte)));
+    };
+    // The branch depends on the seeded SCC. The marker varies the seed.
+    append(cdna5::build_sopp(cdna5::kSCbranchScc1Sopp, {.simm16 = 1}));
+    append(cdna5::build_sopp(cdna5::kSNopSopp));
+    append(cdna5::build_sopp(cdna5::kSEndpgmSopp));
+    input.push_back(marker);
+    const RunStats baseline = run_input(input, std::nullopt, nullptr, AsyncMode::Disabled, 1);
+    for (uint8_t mode : {kWaitCheckingBit, kCacheMemoryBit,
+                         static_cast<uint8_t>(kWaitCheckingBit | kCacheMemoryBit)}) {
+      input[1] = mode;
+      const RunStats stats = run_input(input, std::nullopt, nullptr, AsyncMode::Disabled, 1);
+      EXPECT_EQ(stats.executed, baseline.executed) << unsigned(marker) << ' ' << unsigned(mode);
+      EXPECT_EQ(stats.inputs_halted, 1u);
+    }
+  }
+}
+
 TEST(ExecutionFuzzInputTest, WmmaPrefixStartsAtExactCapacity) {
   constexpr std::array first_wmma =
       cdna5::build_vop3p(cdna5::kVWmmaF3216x16x128Fp8Fp8Vop3p,
