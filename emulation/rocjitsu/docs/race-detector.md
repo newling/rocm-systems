@@ -529,14 +529,18 @@ gfx1151, using absolute paths from this source tree. The original
   count it, a nonzero `s_wait_tensorcnt` that the detector accepts can leave an
   earlier transfer pending, so a real race would go unreported.
 
-- **No counter-capacity backpressure on gfx1250**: hardware stalls issue when a
-  wait counter is full, which proves the oldest pending entry complete without
-  an explicit wait. The detector models this only on CDNA1 through CDNA4 and
-  GFX11. On gfx1250, code that relies on a full counter instead of a wait
-  gets false positives: a wave that issues 64 tensor transfers has completed
-  its first, because the 6-bit `tensorcnt` holds at most 63, but the detector
-  still reports a read of the first transfer's LDS bytes as a race. Explicit
-  `s_wait_*` waits are handled correctly.
+- **No counter-capacity backpressure for most counters**: hardware stalls
+  issue when a wait counter is full, which proves the oldest pending entry
+  complete without an explicit wait. The detector models this only for the
+  combined `vmcnt` and `lgkmcnt` counters (CDNA1 through CDNA4 and RDNA1
+  through RDNA3.5). It does not model `vscnt` or `expcnt`, or any of the split
+  counters of RDNA4 and gfx1250 (`loadcnt`, `storecnt`, `dscnt`, `kmcnt`,
+  `asynccnt` and `tensorcnt`). Code that relies on one of these counters being
+  full instead of a wait gets false positives. For example, on gfx1250 a wave
+  that issues 64 tensor transfers has completed its first, because the 6-bit
+  `tensorcnt` holds at most 63, but the detector still reports a read of the
+  first transfer's LDS bytes as a race. Explicit `s_wait_*` waits are handled
+  correctly.
 
 - **Conservative DPP/SDWA write masks**: WAW precision depends on the execution
   plugin's instruction-write lane and byte masks. DPP destinations can currently
