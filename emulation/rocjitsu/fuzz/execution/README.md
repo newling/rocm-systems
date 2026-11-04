@@ -14,6 +14,7 @@ An input has three parts:
   work.
 - Byte one selects asynchronous execution, concurrent issuers, and full EXEC.
   Bit `0x10` enables runtime memory-wait diagnostics, including XCNT on CDNA5.
+  The diagnostics are logged warnings; a missing wait does not fail the input.
   Bit `0x20` selects the cache-backed memory path for the same bounded mapping.
   These two bits are excluded from the seed for initial register and memory
   contents, so toggling them on replay preserves the starting guest state.
