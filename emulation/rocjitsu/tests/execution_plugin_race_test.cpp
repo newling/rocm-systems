@@ -2759,6 +2759,62 @@ TEST(RaceDetectorPluginOutputTest, KeepsProducerBytesAfterWaitAndTraceOverwrite)
   EXPECT_TRUE(state->race_state->getDetector()->events().isTrimmable(event));
 }
 
+// Wave 0 writes LDS bytes 12-15 and wave 1 reads bytes 0-15 without a barrier.
+// The only shared bytes are 12-15, so the report should name one of them.
+std::string report_partial_lds_overlap(bool wide_read_first) {
+  PluginFixture f;
+  f.initialize(2);
+  PluginSinkConfig config;
+  auto &sink = config.emplace<StringSink>();
+  f.plugin_group_ = std::make_shared<ExecutionPluginGroup>(std::move(config));
+  EXPECT_TRUE(f.plugin_group_->add(std::make_unique<RaceDetectorPlugin>()));
+  f.soc->set_plugin_group(f.plugin_group_);
+  f.plugin_group_->onInit();
+  auto *writer = f.cu()->dispatch_wf(0, 0x1000, 104, 256);
+  auto *reader = f.cu()->dispatch_wf(1, 0x3000, 104, 256);
+  EXPECT_NE(writer, nullptr);
+  EXPECT_NE(reader, nullptr);
+  if (!writer || !reader)
+    return {};
+  writer->set_exec(1u);
+  reader->set_exec(1u);
+  std::array<Wavefront *, 2> waves{writer, reader};
+  f.plugin_group_->onAmdgpuWorkgroupDispatched(1, 0, 256, 104, waves);
+  auto decoder = Decoder::create(ROCJITSU_CODE_ARCH_CDNA4);
+
+  auto run = [&](Wavefront &wf, std::array<uint32_t, 2> words) {
+    auto inst = decoder->decode_window(words);
+    EXPECT_TRUE(inst.succeeded());
+    if (!inst.succeeded())
+      return;
+    f.plugin_group_->onAmdgpuBeforeExecuteInstruction(wf.pc, *inst.value(), wf);
+    EXPECT_TRUE(f.cu()->execute_instruction(inst.value().get(), wf).succeeded());
+    f.plugin_group_->onAmdgpuMemoryAccessRouted({}, *inst.value(), wf);
+  };
+  const auto narrow_write =
+      cdna4::build_ds(cdna4::kDsWriteB32Ds, {.offset0 = 12, .addr = 0, .data0 = 1});
+  const auto wide_read = cdna4::build_ds(cdna4::kDsReadB128Ds, {.addr = 0, .vdst = 8});
+  if (wide_read_first) {
+    run(*reader, wide_read);
+    run(*writer, narrow_write);
+  } else {
+    run(*writer, narrow_write);
+    run(*reader, wide_read);
+  }
+  return sink.str();
+}
+
+TEST(RaceDetectorPluginOutputTest, WideLdsReadReportsAByteItSharesWithThePendingWrite) {
+  const std::string report = report_partial_lds_overlap(/*wide_read_first=*/false);
+  EXPECT_NE(report.find("Race on LDS byte 12 "), std::string::npos) << report;
+  EXPECT_NE(report.find(" reg=12 "), std::string::npos) << report;
+}
+
+TEST(RaceDetectorPluginOutputTest, NarrowLdsWriteReportsAByteItSharesWithThePendingRead) {
+  const std::string report = report_partial_lds_overlap(/*wide_read_first=*/true);
+  EXPECT_NE(report.find("Race on LDS byte 12 "), std::string::npos) << report;
+}
+
 TEST(FindConflictTest, UsesRecordedConflictingEvent) {
   RaceDetector detector(/*nWaves=*/
                         1, /*vgprCount=*/4, /*sgprCount=*/4, Dim3d(0), [](RaceViolation) {},
