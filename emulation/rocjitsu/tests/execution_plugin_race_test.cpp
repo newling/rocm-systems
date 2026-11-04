@@ -904,6 +904,18 @@ TEST_F(DecodedTensorDmaRaceTest, PartialElementLoadIsCheckedAgainstAnOlderRead) 
   EXPECT_NE(sink->str().find("RACE ", previous), std::string::npos) << sink->str();
 }
 
+TEST_F(DecodedTensorDmaRaceTest, PartialElementStoreIsCheckedAgainstAnOlderWrite) {
+  EXPECT_FALSE(ds_write(1, waves[1]->lds_base() + kPeerDwordOffset));
+  const size_t previous = sink->str().size();
+  execute_decoded_tensor(0, /*is_load=*/false, {.lds_offset = kPartialI32Offset, .tile_dim0 = 1});
+  const std::string report = sink->str().substr(previous);
+  // The store reads only the two bytes at 254 that fit the allocation.
+  EXPECT_NE(
+      report.find(std::format("Race on LDS byte {} [", waves[1]->lds_base() + kPartialI32Offset)),
+      std::string::npos)
+      << report;
+}
+
 // Controls: whole 8-byte elements inside the allocation.
 TEST_F(DecodedTensorDmaRaceTest, WholeElementLoadIsAnLdsWrite) {
   execute_decoded_tensor(0, /*is_load=*/true,
