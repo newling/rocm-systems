@@ -295,6 +295,12 @@ public:
   /// VGPR ranges must fail closed when this query returns false.
   FailureOr<bool> global_vgpr_usage_is_complete() const;
 
+  /// @brief Whether the scope has no M0-relative SGPR accesses.
+  FailureOr<bool> global_sgpr_usage_is_complete() const;
+
+  /// @brief Find an even ordinary SGPR pair unused throughout the decoded scope.
+  FailureOr<std::optional<uint16_t>> find_globally_unused_sgpr_pair(const Instruction *inst) const;
+
   /// @brief Find a VGPR tuple that no instruction in the kernel reads or writes.
   ///
   /// @details This query is cheaper and stronger than point liveness: the
@@ -370,6 +376,7 @@ private:
   mutable bool analyzed_ = false;
   bool exec_masked_defs_kill_ = false;
   bool global_vgpr_usage_is_complete_ = true;
+  bool global_sgpr_usage_is_complete_ = true;
   uint16_t min_free_vgpr_ = 0;
   uint16_t max_free_vgpr_ = 0;
   uint8_t wave_size_ = 0;

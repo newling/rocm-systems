@@ -2179,23 +2179,27 @@ SIMD_VOP3_TERNARY_INT: dict[str, tuple[str, str]] = {
     # and scalar shr agree on the result.
     'v_alignbit_b32_vop3': (
         'uint32_t',
-        '[](auto a, auto b, auto c) {'
+        '[offset = ::rocjitsu::amdgpu::vop3_align_count_offset('
+        '::rocjitsu::amdgpu::vop3_opsel(inst.inst_), inst.src2.size_bits())]'
+        '(auto a, auto b, auto c) {'
         ' using U64 = util::stdx::fixed_size_simd<uint64_t, util::native<uint32_t>::size()>;'
         ' auto va = util::stdx::static_simd_cast<U64>(a);'
         ' auto vb = util::stdx::static_simd_cast<U64>(b);'
         ' auto val = (va << 32) | vb;'
-        ' auto sh = util::stdx::static_simd_cast<U64>(c & 31u);'
+        ' auto sh = util::stdx::static_simd_cast<U64>((c >> offset) & 31u);'
         ' return util::stdx::static_simd_cast<util::native<uint32_t>>(val >> sh); }',
     ),
     # v_alignbyte_b32: same widen but shift count is (c & 3) * 8 = {0,8,16,24}.
     'v_alignbyte_b32_vop3': (
         'uint32_t',
-        '[](auto a, auto b, auto c) {'
+        '[offset = ::rocjitsu::amdgpu::vop3_align_count_offset('
+        '::rocjitsu::amdgpu::vop3_opsel(inst.inst_), inst.src2.size_bits())]'
+        '(auto a, auto b, auto c) {'
         ' using U64 = util::stdx::fixed_size_simd<uint64_t, util::native<uint32_t>::size()>;'
         ' auto va = util::stdx::static_simd_cast<U64>(a);'
         ' auto vb = util::stdx::static_simd_cast<U64>(b);'
         ' auto val = (va << 32) | vb;'
-        ' auto sh = util::stdx::static_simd_cast<U64>((c & 3u) * 8u);'
+        ' auto sh = util::stdx::static_simd_cast<U64>(((c >> offset) & 3u) * 8u);'
         ' return util::stdx::static_simd_cast<util::native<uint32_t>>(val >> sh); }',
     ),
     # The shift count is masked to the low 5 bits to match the scalar body's
@@ -2390,8 +2394,8 @@ SIMD_SHIFT64_VOP3: dict[str, str] = {
     ),
 }
 
-# v_lshl_add_u64: (src0 << (src1 & 63)) + src2 — 64-bit value/addend, 32-bit
-# shift. Fixed op, dedicated glue (operand widths differ from the rev-shifts).
+# v_lshl_add_u64 uses a 64-bit value and addend with a 32-bit shift source.
+# The shift encoding differs from the 64-bit reverse shifts.
 SIMD_LSHL_ADD_U64: set[str] = {'v_lshl_add_u64_vop3'}
 
 # --- VOP3 wide 32x32->64 multiply-add (v_mad_u64_u32 / v_mad_i64_i32) -------
@@ -3304,11 +3308,16 @@ def _local_coverage_probe(
             convert = 'util::pack_bf16_simd({x}, wf.fp16_ovfl())'
         else:
             convert = 'util::f32_to_f16_mode_simd(std::bit_cast<util::native<float>>({x}), wf.fp16_ovfl())'
+        src0, src1 = 'a', 'b'
+        if arch_name == 'cdna4':
+            apply = 'amdgpu::source_modifier::apply<amdgpu::fp_format::F32>'
+            src0 = f'{apply}(a, 0, inst.inst_.abs, inst.inst_.neg)'
+            src1 = f'{apply}(b, 1, inst.inst_.abs, inst.inst_.neg)'
         functor = (
             '[&](auto a, auto b) { return '
-            + convert.format(x='a')
+            + convert.format(x=src0)
             + ' | ('
-            + convert.format(x='b')
+            + convert.format(x=src1)
             + ' << 16); }'
         )
         return call(2, False, 0, functor)

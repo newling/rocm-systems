@@ -2201,7 +2201,7 @@ TEST(ExecutionPluginTest, Vop3CompareObservesOnlyArchitecturalDestinationReads) 
   EXPECT_TRUE(destination_reads().empty());
 }
 
-TEST(ExecutionPluginTest, Vop3DppSecondaryMaskObservesOnlyRequiredOldDestinationRead) {
+TEST(ExecutionPluginTest, Vop3DppCarryWritesScalarDestinationWithoutReadingIt) {
   if constexpr (!util::has_stdx_simd) {
     GTEST_SKIP() << "<experimental/simd> unavailable";
     return;
@@ -2250,23 +2250,14 @@ TEST(ExecutionPluginTest, Vop3DppSecondaryMaskObservesOnlyRequiredOldDestination
     SCOPED_TRACE(force_scalar ? "scalar" : "SIMD");
     ForceScalarOverride force_scalar_scope(force_scalar);
 
-    // BOUND_CTRL=0 preserves the invalid lane's old carry bit, so exactly one
-    // architectural read of the old scalar destination is required.
-    raw.bound_ctrl = 0;
-    f.cu->write_sgpr(sbase + kScalarDst, 0xFFFFFFFFu);
-    cdna5::VAddCoCiU32Vop3SdstEnc preserve(reinterpret_cast<const cdna5::MachineInst *>(&raw));
-    plugin->events.clear();
-    preserve.execute_impl(*wf);
-    EXPECT_EQ(destination_read_count(), 1);
-
-    // BOUND_CTRL=1 supplies zero for the invalid source. No old-destination
-    // merge or read is needed; the raw result is committed directly.
-    raw.bound_ctrl = 1;
-    f.cu->write_sgpr(sbase + kScalarDst, 0xFFFFFFFFu);
-    cdna5::VAddCoCiU32Vop3SdstEnc zero_fill(reinterpret_cast<const cdna5::MachineInst *>(&raw));
-    plugin->events.clear();
-    zero_fill.execute_impl(*wf);
-    EXPECT_EQ(destination_read_count(), 0);
+    for (uint32_t bound_ctrl : {0u, 1u}) {
+      raw.bound_ctrl = bound_ctrl;
+      f.cu->write_sgpr(sbase + kScalarDst, 0xFFFFFFFFu);
+      cdna5::VAddCoCiU32Vop3SdstEnc add(reinterpret_cast<const cdna5::MachineInst *>(&raw));
+      plugin->events.clear();
+      add.execute_impl(*wf);
+      EXPECT_EQ(destination_read_count(), 0);
+    }
   }
 }
 

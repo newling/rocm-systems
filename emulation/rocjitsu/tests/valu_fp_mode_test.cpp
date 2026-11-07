@@ -3792,14 +3792,16 @@ std::vector<ArithmeticCase> fp8_cases() {
   cdna4_pk("Gfx950PkFp8InfinityFp16Ovfl", cdna4::kVCvtPkFp8F32Vop3, 0x7f800000u, 0x7eu);
   cdna4_pk("Gfx950PkFp8NegInfinityFp16Ovfl", cdna4::kVCvtPkFp8F32Vop3, 0xff800000u, 0xfeu);
   cdna4_pk("Gfx950PkBf8InfinityFp16Ovfl", cdna4::kVCvtPkBf8F32Vop3, 0x7f800000u, 0x7bu);
-  // gfx1250 is uncaptured too; the CDNA5 manual's table gives the same rule.
+  // CDNA5 Table 7 (p. 22) preserves true infinity outside WMMA. Section 7.6.2
+  // (p. 81) instead specifies max finite with FP16_OVFL set for these converts.
+  // These encodings use physical gfx1201 results as a proxy pending gfx1250 data.
   const auto cdna5_pk = [&](const char *name, uint16_t op, uint32_t low, uint32_t result) {
     manual_pk(name, ROCJITSU_CODE_ARCH_CDNA5,
               cdna5::build_vop3(op, {.vdst = 6, .src0 = 256, .src1 = 257}), low, result);
   };
-  cdna5_pk("Gfx1250PkFp8InfinityFp16Ovfl", cdna5::kVCvtPkFp8F32Vop3, 0x7f800000u, 0x7eu);
-  cdna5_pk("Gfx1250PkFp8NegInfinityFp16Ovfl", cdna5::kVCvtPkFp8F32Vop3, 0xff800000u, 0xfeu);
-  cdna5_pk("Gfx1250PkBf8InfinityFp16Ovfl", cdna5::kVCvtPkBf8F32Vop3, 0x7f800000u, 0x7bu);
+  cdna5_pk("Gfx1250PkFp8InfinityFp16Ovfl", cdna5::kVCvtPkFp8F32Vop3, 0x7f800000u, 0x7fu);
+  cdna5_pk("Gfx1250PkFp8NegInfinityFp16Ovfl", cdna5::kVCvtPkFp8F32Vop3, 0xff800000u, 0xffu);
+  cdna5_pk("Gfx1250PkBf8InfinityFp16Ovfl", cdna5::kVCvtPkBf8F32Vop3, 0x7f800000u, 0x7cu);
   return cases;
 }
 

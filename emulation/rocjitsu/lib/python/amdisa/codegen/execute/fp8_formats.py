@@ -19,8 +19,11 @@ class Fp8Policy(Enum):
     OCP_SHARED = auto()
 
 
-# CDNA4 and CDNA5 keep util's helpers: their manuals saturate an infinity under
-# FP16_OVFL, which gfx1201 does not, and neither target has captures.
+# CDNA5 defaults to util for widening, scaled conversions and E5M3. For
+# non-scaled F32-to-OCP FP8/BF8, CDNA5 Table 7 (p. 22) preserves true infinity
+# outside WMMA, while section 7.6.2 (p. 81) saturates it when FP16_OVFL is set.
+# Pending a gfx1250 measurement, gfx1201 hardware is the proxy. It gives
+# the same infinity conversion result with either setting.
 _FP8_POLICIES = {
     'cdna3': Fp8Policy.FNUZ,
     'cdna4': Fp8Policy.OCP_UTIL,

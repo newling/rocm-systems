@@ -116,9 +116,10 @@ struct Fixture {
   std::unique_ptr<Decoder> decoder;
   amdgpu::Wavefront *wf = nullptr;
 
-  Fixture() : gpu_mem("vop3p_pk_bin_int_mem"), l2("vop3p_pk_bin_int_l2") {
+  explicit Fixture(rj_code_arch_t arch = ROCJITSU_CODE_ARCH_CDNA4)
+      : gpu_mem("vop3p_pk_bin_int_mem"), l2("vop3p_pk_bin_int_l2") {
     amdgpu::ComputeUnitCore::Config cfg{};
-    cfg.arch = ROCJITSU_CODE_ARCH_CDNA4;
+    cfg.arch = arch;
     cfg.num_wf_slots = 1;
     cfg.sgprs_per_wf = SGPRS_PER_WF;
     cfg.vgprs_per_wf = VGPRS_PER_WF;
@@ -126,7 +127,7 @@ struct Fixture {
     rocjitsu::test::initialize_compute_unit(cu, "cu_vop3p_pk_bin_int", cfg, &gpu_mem, &l2);
     if (!cu)
       return;
-    decoder = Decoder::create(ROCJITSU_CODE_ARCH_CDNA4);
+    decoder = Decoder::create(arch);
     wf = cu->dispatch_wf(0, 0, SGPRS_PER_WF, VGPRS_PER_WF);
   }
 
@@ -199,6 +200,45 @@ void check_case(const Case &c, uint64_t exec) {
             << c.name << " rot=" << rot << ": clobbered inactive lane " << lane;
         EXPECT_EQ(scalar_out[lane], DST_SENTINEL)
             << c.name << " rot=" << rot << ": clobbered inactive lane " << lane;
+      }
+    }
+  }
+}
+
+TEST(Vop3pPkBinaryIntSimdCorrectness, AppliesSignBitsAfterSelectingSourceHalves) {
+  struct NegCase {
+    uint32_t words[2];
+    uint32_t expected;
+  };
+  // LLVM encodings for v6, v0, v1[, v2] on gfx1100, gfx1151, gfx1201 and gfx1250.
+  constexpr NegCase cases[] = {
+      {{0xcc00c206, 0x3c0a0300}, 0x7ffe8000}, // MAD_I16: negate low A and high B, clamp.
+      {{0xcc004406, 0x9c0a0300}, 0x7ffe800f}, // MAD_I16: negate both halves of C.
+      {{0xcc0a4a06, 0x32020300}, 0x80068003}, // ADD_U16: swap A's halves, negate low A and high B.
+  };
+  ForceScalarGuard guard;
+  for (auto arch : {ROCJITSU_CODE_ARCH_RDNA3, ROCJITSU_CODE_ARCH_RDNA3_5, ROCJITSU_CODE_ARCH_RDNA4,
+                    ROCJITSU_CODE_ARCH_CDNA5}) {
+    SCOPED_TRACE(arch);
+    Fixture fx(arch);
+    ASSERT_NE(fx.wf, nullptr);
+    const uint32_t base = fx.wf->vgpr_alloc().base;
+    fx.wf->set_exec(1);
+    fx.cu->write_vgpr(base, 0, 0xffff0003);
+    fx.cu->write_vgpr(base + 1, 0, 0x00030004);
+    fx.cu->write_vgpr(base + 2, 0, 0x00010003);
+    for (const auto &c : cases) {
+      std::unique_ptr<Instruction> inst(decode_valid(*fx.decoder, c.words));
+      ASSERT_NE(inst, nullptr);
+      SCOPED_TRACE(inst->mnemonic());
+      for (bool force_scalar : {false, true}) {
+        SCOPED_TRACE(force_scalar);
+        util::set_force_scalar_for_testing(force_scalar);
+        fx.cu->write_vgpr(base + kDstVgpr, 0, DST_SENTINEL);
+        fx.cu->write_vgpr(base + kDstVgpr, 1, DST_SENTINEL);
+        ASSERT_TRUE(fx.cu->execute_instruction(inst.get(), *fx.wf).succeeded());
+        EXPECT_EQ(fx.cu->read_vgpr(base + kDstVgpr, 0), c.expected);
+        EXPECT_EQ(fx.cu->read_vgpr(base + kDstVgpr, 1), DST_SENTINEL);
       }
     }
   }

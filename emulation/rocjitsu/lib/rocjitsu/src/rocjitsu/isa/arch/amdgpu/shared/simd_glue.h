@@ -212,18 +212,19 @@ inline std::make_unsigned_t<T> vop3_integer_add(std::make_unsigned_t<T> lhs,
   }
 }
 
-/// @brief Add with intrinsic saturation, then select the maximum or minimum operand.
+/// @brief Add with saturation, select the maximum or minimum, then apply signed ReLU if enabled.
 template <typename T, bool SelectMax>
 inline std::make_unsigned_t<T> vop3_integer_add_minmax(std::make_unsigned_t<T> lhs,
                                                        std::make_unsigned_t<T> rhs,
-                                                       std::make_unsigned_t<T> bound) {
+                                                       std::make_unsigned_t<T> bound, bool clamp) {
   static_assert(std::is_integral_v<T> && sizeof(T) == 4);
   using U = std::make_unsigned_t<T>;
   const U sum_bits = vop3_integer_add<T>(lhs, rhs, true);
   if constexpr (std::is_signed_v<T>) {
     const T sum = std::bit_cast<T>(sum_bits);
     const T typed_bound = std::bit_cast<T>(bound);
-    return static_cast<U>(SelectMax ? std::max(sum, typed_bound) : std::min(sum, typed_bound));
+    const T result = SelectMax ? std::max(sum, typed_bound) : std::min(sum, typed_bound);
+    return static_cast<U>(clamp ? std::max<T>(result, 0) : result);
   } else {
     return SelectMax ? std::max(sum_bits, bound) : std::min(sum_bits, bound);
   }
@@ -353,6 +354,12 @@ inline uint32_t sign_extend_u32(uint32_t value, unsigned bits) {
 inline uint32_t lshl_masked(uint32_t value, uint32_t count) { return value << (count & 31u); }
 
 inline uint64_t lshl_masked(uint64_t value, uint64_t count) { return value << (count & 63u); }
+
+// V_LSHL_ADD_U64 uses S1[2:0]. Encoded shifts 5 through 7 select a shift of zero.
+inline uint64_t lshl_for_add_u64(uint64_t value, uint64_t count) {
+  const uint64_t shift = count & 7u;
+  return value << (shift <= 4u ? shift : 0u);
+}
 
 inline uint32_t bfm_b32(uint32_t width, uint32_t offset) {
   const uint32_t w = width & 31u;
@@ -587,6 +594,12 @@ template <typename Inst> inline bool vop3_fp8_decode_e5m3(const Inst &inst) {
       return inst.inst_.clamp;
   }
   return false;
+}
+
+// ALIGNBIT/BYTE select a byte of the count on GFX9/10 and a half on GFX11+.
+inline uint32_t vop3_align_count_offset(uint32_t opsel, int count_bits) {
+  assert(count_bits == 8 || count_bits == 16);
+  return count_bits == 8 ? 8u * (opsel & 3u) : 16u * ((opsel >> 2) & 1u);
 }
 
 template <typename Operand>
@@ -3762,10 +3775,7 @@ template <typename Inst, typename ShiftOp>
   return false;
 }
 
-/// VOP3 v_lshl_add_u64 fast path: dst = (src0 << (src1 & 63)) + src2, all 64-bit
-/// except the 32-bit shift amount src1. The scalar body shifts by the raw src1
-/// (C++ UB at >=64, but x86 masks the count to 6 bits); masking to 63 here
-/// reproduces that x86 scalar result for every shift value.
+/// VOP3 v_lshl_add_u64 fast path with a 32-bit shift source and 64-bit value and addend.
 template <typename Inst>
   requires(util::has_stdx_simd)
 [[nodiscard]] inline bool try_execute_lshl_add_u64_simd(Inst &inst, Wavefront &wf) {
@@ -3788,8 +3798,9 @@ template <typename Inst>
     const auto v = value_src.template load_native<uint64_t>(base);
     const auto s = shift_src.template load_narrow<uint32_t>(base);
     const auto c = addend_src.template load_native<uint64_t>(base);
-    const auto sh = util::stdx::static_simd_cast<util::native<uint64_t>>(s) & 63ull;
-    if (dst.template store_native<uint64_t>(base, simd_lshl_u64(v, sh) + c, chunk).failed())
+    const auto counts = util::stdx::static_simd_cast<util::native<uint64_t>>(s);
+    const auto shifted = util::map_native64_scalar<uint64_t>(v, counts, lshl_for_add_u64);
+    if (dst.template store_native<uint64_t>(base, shifted + c, chunk).failed())
       return true;
   }
   return true;
@@ -3980,10 +3991,23 @@ template <typename Encoding> inline uint32_t packed_opsel_hi_2(const Encoding &e
     return enc.op_sel_hi_2;
 }
 
+// gfx1100 and gfx1201 apply NEG_LO/NEG_HI to the selected integer source halves.
+// RDNA3.5 follows RDNA3; CDNA5 follows RDNA4 for their common packed operations.
+template <typename Encoding>
+inline uint32_t packed_integer_negations(rj_code_arch_t arch, const Encoding &enc) {
+  if (arch == ROCJITSU_CODE_ARCH_RDNA3 || arch == ROCJITSU_CODE_ARCH_RDNA3_5 ||
+      arch == ROCJITSU_CODE_ARCH_RDNA4 || arch == ROCJITSU_CODE_ARCH_CDNA5)
+    return static_cast<uint32_t>(enc.neg) | (static_cast<uint32_t>(enc.neg_hi) << 16);
+  return 0;
+}
+
 template <typename V>
-inline V select_packed_halves(V value, uint32_t low, uint32_t high, unsigned operand) {
-  return ((value >> (((low >> operand) & 1u) * 16)) & V(0xffffu)) |
-         ((value >> (((high >> operand) & 1u) * 16)) << 16);
+inline V select_packed_halves(V value, uint32_t low, uint32_t high, unsigned operand,
+                              uint32_t negations = 0) {
+  const V selected = ((value >> (((low >> operand) & 1u) * 16)) & V(0xffffu)) |
+                     ((value >> (((high >> operand) & 1u) * 16)) << 16);
+  const uint32_t sign_bits = ((negations >> operand) & 0x00010001u) << 15;
+  return selected ^ V(sign_bits);
 }
 
 /// Destination shape for the VOP3P fma_mix / mad_mix family. F32 writes a
@@ -4359,14 +4383,17 @@ template <typename Inst, typename Op>
   auto src0 = regs.read_operand(inst.src0, exec);
   auto src1 = regs.read_operand(inst.src1, exec);
   auto dst = regs.write_operand(inst.vdst, exec);
+  const uint32_t negations = packed_integer_negations(wf.cu().arch(), inst.inst_);
   for (uint32_t base = 0; base < wf.wf_size(); base += static_cast<uint32_t>(W)) {
     const uint64_t chunk = (exec >> base) & chunk_full;
     if (chunk == 0)
       continue;
-    const auto a = select_packed_halves(src0.template load_native<T>(base),
-                                        packed_opsel(inst.inst_), packed_opsel_hi(inst.inst_), 0);
-    const auto b = select_packed_halves(src1.template load_native<T>(base),
-                                        packed_opsel(inst.inst_), packed_opsel_hi(inst.inst_), 1);
+    const auto a =
+        select_packed_halves(src0.template load_native<T>(base), packed_opsel(inst.inst_),
+                             packed_opsel_hi(inst.inst_), 0, negations);
+    const auto b =
+        select_packed_halves(src1.template load_native<T>(base), packed_opsel(inst.inst_),
+                             packed_opsel_hi(inst.inst_), 1, negations);
     const auto r = op(a, b);
     if (dst.template store_native<T>(base, r, chunk).failed())
       return true;
@@ -4400,17 +4427,20 @@ template <typename Inst, typename Op>
   auto src1 = regs.read_operand(inst.src1, exec);
   auto src2 = regs.read_operand(inst.src2, exec);
   auto dst = regs.write_operand(inst.vdst, exec);
+  const uint32_t negations = packed_integer_negations(wf.cu().arch(), inst.inst_);
   for (uint32_t base = 0; base < wf.wf_size(); base += static_cast<uint32_t>(W)) {
     const uint64_t chunk = (exec >> base) & chunk_full;
     if (chunk == 0)
       continue;
-    const auto a = select_packed_halves(src0.template load_native<T>(base),
-                                        packed_opsel(inst.inst_), packed_opsel_hi(inst.inst_), 0);
-    const auto b = select_packed_halves(src1.template load_native<T>(base),
-                                        packed_opsel(inst.inst_), packed_opsel_hi(inst.inst_), 1);
-    const auto c =
-        select_packed_halves(src2.template load_native<T>(base), packed_opsel(inst.inst_),
-                             packed_opsel_hi(inst.inst_) | (packed_opsel_hi_2(inst.inst_) << 2), 2);
+    const auto a =
+        select_packed_halves(src0.template load_native<T>(base), packed_opsel(inst.inst_),
+                             packed_opsel_hi(inst.inst_), 0, negations);
+    const auto b =
+        select_packed_halves(src1.template load_native<T>(base), packed_opsel(inst.inst_),
+                             packed_opsel_hi(inst.inst_), 1, negations);
+    const auto c = select_packed_halves(
+        src2.template load_native<T>(base), packed_opsel(inst.inst_),
+        packed_opsel_hi(inst.inst_) | (packed_opsel_hi_2(inst.inst_) << 2), 2, negations);
     const auto r = op(a, b, c);
     if (dst.template store_native<T>(base, r, chunk).failed())
       return true;
@@ -5663,7 +5693,7 @@ template <bool Vop3, typename Inst>
   if (::rocjitsu::amdgpu::try_execute_shift64_vop3_simd(inst, wf, __VA_ARGS__))                    \
   return
 
-/// VOP3 v_lshl_add_u64 counterpart. Fixed op ((src0 << (src1 & 63)) + src2).
+/// VOP3 v_lshl_add_u64 counterpart.
 #define ROCJITSU_TRY_SIMD_LSHL_ADD_U64()                                                           \
   if (::rocjitsu::amdgpu::try_execute_lshl_add_u64_simd(inst, wf))                                 \
   return

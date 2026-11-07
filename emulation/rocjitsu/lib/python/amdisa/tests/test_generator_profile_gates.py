@@ -3895,7 +3895,7 @@ def test_gfx1250_generated_vop3_mad_u16_uses_true16_helpers(
     assert 'read_vop3_true16_src(src0, wf, lane, opsel, 0)' in body
     assert 'read_vop3_true16_src(src1, wf, lane, opsel, 1)' in body
     assert 'read_vop3_true16_src(src2, wf, lane, opsel, 2)' in body
-    assert 'write_vop3_true16_dst(vdst, wf, lane, opsel, result, true)' in body
+    assert 'write_vop3_true16_dst(vdst, wf, lane, opsel, result, false)' in body
 
 
 def test_generated_special_vop3_true16_paths_use_selected_halves(
@@ -5197,7 +5197,7 @@ def test_gfx1250_generator_wires_instruction_specific_integer_saturation():
     for name, helper in expected_helpers.items():
         body = generated_body(name, 'ENC_VOP3')
         assert helper in body
-        assert 'inst_.clamp' not in body
+        assert 'inst_.clamp' in body
 
     for name, enc_name, result_writer in (
         ('V_MAD_NC_U64_U32', 'ENC_VOP3', None),
@@ -7033,12 +7033,15 @@ def test_generated_modern_dpp_source_policy_covers_non_vop1_families(
     sdst_body = _generated_method_body(
         vop3_exec, 'VAddCoCiU32Vop3SdstEnc', 'VSubCoCiU32Vop3SdstEnc'
     )
-    assert sdst_body.count('read_wave_mask_scalar(sdst, wf)') == 1
+    assert 'read_wave_mask_scalar(sdst, wf)' not in sdst_body
     assert sdst_body.count('write_wave_mask_scalar(sdst, wf, final_result)') == 1
     assert sdst_body.count('amdgpu::dpp::make_dpp_plan(') == 1
     assert 'dpp_secondary_source_write_mask_' not in sdst_body
     assert 'commit_result' in sdst_body
-    assert 'amdgpu::dpp::dpp_source_suppressed_result(' in sdst_body
+    assert (
+        'final_result &= dpp_plan_.row_bank_mask & dpp_plan_.source_write_mask;'
+        in sdst_body
+    )
     assert 'dpp_secondary_preserve_mask' not in sdst_body
     assert 'execute_v_add_co_ci_u32_vop3(*this, wf, commit_result)' in sdst_body
     assert 'apply_dpp(src0, dpp_plan_, dpp_old_exec_, dpp_src0_, wf)' in sdst_body
@@ -7131,7 +7134,7 @@ def test_shared_vop2_carry_result_writer_keeps_simd_enabled(
         ),
     ],
 )
-def test_generated_vop2_carry_dpp_preserves_only_source_suppressed_vcc(
+def test_generated_vop2_dpp_carry_mask(
     amdgpu_generated_root: Path,
     arch: str,
     class_names: tuple[str, ...],
@@ -7140,6 +7143,12 @@ def test_generated_vop2_carry_dpp_preserves_only_source_suppressed_vcc(
     source = _execution_source_path(
         arch_root / 'vop2.cpp', _profile_for_arch(arch)
     ).read_text()
+    clears_masked = arch in ('gfx1250', 'rdna3', 'rdna3_5', 'rdna4')
+    carry_rule = (
+        'final_result &= dpp_plan_.row_bank_mask & dpp_plan_.source_write_mask;'
+        if clears_masked
+        else 'amdgpu::dpp::dpp_source_suppressed_result('
+    )
     classified = set()
     for class_name in re.findall(
         r'^RJ_NOINLINE void (\w+)::execute_modifier_impl', source, re.MULTILINE
@@ -7147,7 +7156,7 @@ def test_generated_vop2_carry_dpp_preserves_only_source_suppressed_vcc(
         body = _generated_function_body(
             source, f'RJ_NOINLINE void {class_name}::execute_modifier_impl'
         )
-        if 'amdgpu::dpp::dpp_source_suppressed_result(' in body:
+        if carry_rule in body:
             classified.add(class_name)
     assert classified == set(class_names)
 
@@ -7161,13 +7170,16 @@ def test_generated_vop2_carry_dpp_preserves_only_source_suppressed_vcc(
 
         assert 'auto commit_result = [&](uint64_t raw_result)' in ordinary_body
         assert 'uint64_t dpp_old_exec_ = wf.exec();' in body
-        assert 'uint64_t dpp_old_vcc_ = wf.vcc();' in body
-        assert 'dpp_source_write_mask_ = dpp_plan_.source_write_mask;' in body
-        merge_start = body.index('amdgpu::dpp::dpp_source_suppressed_result(')
-        merge_end = body.index('wf.set_vcc_mask(final_result);', merge_start)
-        merge = body[merge_start:merge_end]
-        assert 'dpp_old_vcc_, dpp_old_exec_, dpp_source_write_mask_' in merge
-        assert 'row_bank' not in merge
+        if clears_masked:
+            assert 'dpp_old_vcc_' not in body
+        else:
+            assert 'uint64_t dpp_old_vcc_ = wf.vcc();' in body
+            assert 'dpp_source_write_mask_ = dpp_plan_.source_write_mask;' in body
+            merge_start = body.index(carry_rule)
+            merge_end = body.index('wf.set_vcc_mask(final_result);', merge_start)
+            merge = body[merge_start:merge_end]
+            assert 'dpp_old_vcc_, dpp_old_exec_, dpp_source_write_mask_' in merge
+            assert 'row_bank' not in merge
         assert 'ScopedVgprWriteMask' in body
         assert 'commit_result' in body
 

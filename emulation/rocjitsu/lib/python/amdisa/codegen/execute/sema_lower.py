@@ -1753,6 +1753,7 @@ _INLINE_TERNARY_OPS: dict[str, str] = {
     'xor3': '({0} ^ {1} ^ {2})',
     'xad': '(({0} ^ {1}) + {2})',
     'lshl_add': '(::rocjitsu::amdgpu::lshl_masked({0}, {1}) + {2})',
+    'lshl_add_u64': '(::rocjitsu::amdgpu::lshl_for_add_u64({0}, {1}) + {2})',
     'lshl_or': '(::rocjitsu::amdgpu::lshl_masked({0}, {1}) | {2})',
     'add_lshl': '::rocjitsu::amdgpu::lshl_masked(({0} + {1}), {2})',
     'ashr_pk_i8_i32': '[&]() -> uint32_t {{'
@@ -1979,6 +1980,15 @@ def _lower_call(node: SemaNode, ctx: LoweringContext) -> str:
         args = [source]
     else:
         args = [_lower_expr(c, ctx) for c in node.children[1:]]
+    if callee in ('alignbit', 'alignbyte') and ctx.operand_map:
+        count = ctx.operand_map.src(2)
+        if count and count.bit_width == 8:
+            # GFX9/10 use OPSEL[1:0] as a byte index. Later encodings already
+            # lower their 16-bit S2 through the ordinary true16 reader.
+            args[2] = (
+                f'({args[2]} >> amdgpu::vop3_align_count_offset('
+                'amdgpu::vop3_opsel(inst_), 8))'
+            )
     args_str = ', '.join(args)
     if callee == 'mul_legacy':
         if (arithmetic := _mode_arithmetic(node, ctx, 'MUL_LEGACY', args)) is not None:
@@ -1993,7 +2003,8 @@ def _lower_call(node: SemaNode, ctx: LoweringContext) -> str:
     if ctx.integer_saturation_dtype is not None and callee in add_minmax_calls:
         cpp_type, select_max = add_minmax_calls[callee]
         return (
-            f'amdgpu::vop3_integer_add_minmax<{cpp_type}, {select_max}>(' f'{args_str})'
+            f'amdgpu::vop3_integer_add_minmax<{cpp_type}, {select_max}>('
+            f'{args_str}, inst_.clamp)'
         )
 
     saturating_calls = {

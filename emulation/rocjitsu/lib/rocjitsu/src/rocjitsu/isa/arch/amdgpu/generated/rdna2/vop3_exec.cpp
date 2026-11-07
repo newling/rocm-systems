@@ -812,7 +812,19 @@ void VLshlrevB16Vop3::execute_impl(amdgpu::Wavefront &wf) {
   amdgpu::execute_v_lshlrev_b16_vop3(*this, wf);
 }
 
-void VMadU16Vop3::execute_impl(amdgpu::Wavefront &wf) { amdgpu::execute_v_mad_u16_vop3(*this, wf); }
+void VMadU16Vop3::execute_impl(amdgpu::Wavefront &wf) {
+  uint64_t exec = wf.exec();
+  uint32_t opsel = ::rocjitsu::amdgpu::vop3_opsel(inst_);
+  for (uint32_t lane = 0; lane < wf.wf_size(); ++lane) {
+    if (!(exec & (1ULL << lane)))
+      continue;
+    uint32_t s0 = ::rocjitsu::amdgpu::read_vop3_true16_src(src0, wf, lane, opsel, 0);
+    uint32_t s1 = ::rocjitsu::amdgpu::read_vop3_true16_src(src1, wf, lane, opsel, 1);
+    uint32_t s2 = ::rocjitsu::amdgpu::read_vop3_true16_src(src2, wf, lane, opsel, 2);
+    uint32_t result = amdgpu::vop3_integer_mad<uint16_t, 16>(s0, s1, s2, inst_.clamp);
+    ::rocjitsu::amdgpu::write_vop3_true16_dst(vdst, wf, lane, opsel, result, false);
+  }
+}
 
 void VInterpP1llF16Vop3::execute_impl(amdgpu::Wavefront &wf) {
   wf.report_instruction_execution_error(
@@ -881,7 +893,19 @@ void VInterpP2F16Vop3::execute_impl(amdgpu::Wavefront &wf) {
       amdgpu::InstructionExecutionError::UnimplementedInstruction);
 }
 
-void VMadI16Vop3::execute_impl(amdgpu::Wavefront &wf) { amdgpu::execute_v_mad_i16_vop3(*this, wf); }
+void VMadI16Vop3::execute_impl(amdgpu::Wavefront &wf) {
+  uint64_t exec = wf.exec();
+  uint32_t opsel = ::rocjitsu::amdgpu::vop3_opsel(inst_);
+  for (uint32_t lane = 0; lane < wf.wf_size(); ++lane) {
+    if (!(exec & (1ULL << lane)))
+      continue;
+    uint32_t s0 = ::rocjitsu::amdgpu::read_vop3_true16_src(src0, wf, lane, opsel, 0);
+    uint32_t s1 = ::rocjitsu::amdgpu::read_vop3_true16_src(src1, wf, lane, opsel, 1);
+    uint32_t s2 = ::rocjitsu::amdgpu::read_vop3_true16_src(src2, wf, lane, opsel, 2);
+    uint32_t result = amdgpu::vop3_integer_mad<int16_t, 16>(s0, s1, s2, inst_.clamp);
+    ::rocjitsu::amdgpu::write_vop3_true16_dst(vdst, wf, lane, opsel, result, false);
+  }
+}
 
 void VDivFixupF16Vop3::execute_impl(amdgpu::Wavefront &wf) {
   amdgpu::execute_v_div_fixup_f16_vop3(*this, wf);

@@ -290,6 +290,8 @@ void LivenessAnalysis::collect_global_register_usage(KernelBlockScope blocks,
     if (block == nullptr)
       continue;
     for (const Instruction &inst : block->instructions()) {
+      if (inst.mnemonic().starts_with("s_movrel"))
+        global_sgpr_usage_is_complete_ = false;
       if (may_access_vgprs_indirectly(inst, text, arch))
         global_vgpr_usage_is_complete_ = false;
 
@@ -494,6 +496,21 @@ FailureOr<bool> LivenessAnalysis::global_vgpr_usage_is_complete() const {
   if (require_available().failed())
     return Result::failure();
   return global_vgpr_usage_is_complete_;
+}
+
+FailureOr<bool> LivenessAnalysis::global_sgpr_usage_is_complete() const {
+  if (require_available().failed())
+    return Result::failure();
+  return global_sgpr_usage_is_complete_;
+}
+
+FailureOr<std::optional<uint16_t>>
+LivenessAnalysis::find_globally_unused_sgpr_pair(const Instruction *inst) const {
+  if (require_available().failed())
+    return Result::failure();
+  if (!global_sgpr_usage_is_complete_ || !inst || !scoped_blocks_.contains(inst->parent()))
+    return std::optional<uint16_t>{};
+  return rocjitsu::find_free_sgpr_pair(globally_used_registers_, REGISTER_SET_ALLOCATABLE_SGPRS);
 }
 
 FailureOr<std::optional<uint16_t>>

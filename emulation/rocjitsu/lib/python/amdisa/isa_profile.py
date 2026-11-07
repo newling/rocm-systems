@@ -704,8 +704,8 @@ class IsaProfile(ABC):
         CLAMP is present in the shared VOP3 encoding, but it is not legal for
         every opcode in that encoding. Keep the instruction-level policy here
         instead of inferring support from the encoding field alone. ADD_MIN/MAX
-        always saturate their internal addition; the remaining instructions use
-        this policy to apply their encoded CLAMP modifier.
+        always saturate their internal addition. Their signed variants apply
+        CLAMP to the selected result.
         """
         return {
             'V_ADDC_CO_U32': 'u32',
@@ -897,6 +897,11 @@ class IsaProfile(ABC):
         Wave64 results confirm that FI does not affect out-of-range sources;
         BOUND_CTRL alone governs them.
         """
+        return False
+
+    @property
+    def dpp_masks_carry(self) -> bool:
+        """Apply DPP write enables to the scalar carry/borrow result."""
         return False
 
     @property
@@ -2462,6 +2467,10 @@ class Rdna3Profile(_AmdgpuProfileBase):
         return False
 
     @property
+    def dpp_masks_carry(self) -> bool:
+        return True
+
+    @property
     def dpp_bound_ctrl_applies_to_inactive_sources(self) -> bool:
         return True
 
@@ -2779,6 +2788,10 @@ class Rdna4Profile(_AmdgpuProfileBase):
         # Indexed DS retains its independent MODE-controlled policy.
         _, lds_mode = super().scalar_atomic_denorm_modes(operation, elem_size, ds=ds)
         return '3', lds_mode if ds else '3'
+
+    @property
+    def dpp_masks_carry(self) -> bool:
+        return True
 
     @property
     def dpp_bound_ctrl_applies_to_inactive_sources(self) -> bool:
