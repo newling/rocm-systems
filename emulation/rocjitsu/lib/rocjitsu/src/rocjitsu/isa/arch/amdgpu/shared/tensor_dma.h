@@ -669,7 +669,7 @@ inline void for_each_gather_tensor_element(const TensorDmaDescriptor &desc,
 template <typename Visitor>
 inline void for_each_dense_tensor_element(const TensorDmaDescriptor &desc,
                                           const TensorDmaLayout &layout, Visitor &visit) {
-  const auto dimensions = layout.dimensions();
+  const std::span<const uint32_t> dimensions = layout.dimensions();
   if (dimensions.empty())
     return;
 

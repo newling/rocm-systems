@@ -9,9 +9,17 @@
 #include "rocjitsu/vm/plugins/execution_plugin_group.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <functional>
+#include <initializer_list>
+#include <ios>
+#include <iterator>
 #include <memory>
+#include <span>
+#include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 #include <sys/mman.h>
