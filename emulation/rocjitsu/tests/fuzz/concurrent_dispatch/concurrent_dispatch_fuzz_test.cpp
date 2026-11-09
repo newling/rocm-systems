@@ -415,7 +415,7 @@ TEST(ConcurrentDispatchFuzzTest, TerminalFaultCancelsOlderUnbarrieredPacket) {
   }
 }
 
-TEST(ConcurrentDispatchFuzzTest, TerminalFaultReleasesPrimaryAcrossWorkerModes) {
+TEST(ConcurrentDispatchFuzzTest, TerminalFaultReleasesPrimaryWithoutPublishingCompletion) {
   const RunStats stats = run_input(flat_store_input(/*address=*/0));
   EXPECT_EQ(stats.differential_inputs, 0u);
   EXPECT_EQ(stats.completed_modes, 0u);
@@ -423,6 +423,8 @@ TEST(ConcurrentDispatchFuzzTest, TerminalFaultReleasesPrimaryAcrossWorkerModes) 
   EXPECT_EQ(stats.terminal_faulted_modes, stats.modes);
   EXPECT_EQ(stats.primary_stalled_modes, 0u);
   EXPECT_EQ(stats.budget_limited_inputs, 0u);
+  EXPECT_EQ(stats.published_completions, 0u);
+  EXPECT_EQ(stats.incomplete_inputs, 1u);
 }
 
 TEST(ConcurrentDispatchFuzzTest, PrimaryLifecycleOracleChecksStallsAndReleasedPrimaries) {
@@ -460,15 +462,6 @@ TEST(ConcurrentDispatchFuzzTest, BudgetCountersRequireNonFaultTickExhaustion) {
   EXPECT_EQ(stats.completed_modes, 0u);
   EXPECT_EQ(stats.budget_limited_modes, stats.modes);
   EXPECT_EQ(stats.budget_limited_inputs, 1u);
-}
-
-TEST(ConcurrentDispatchFuzzTest, TerminallyFaultedPacketDoesNotPublishCompletion) {
-  const RunStats stats = run_input(flat_store_input(/*address=*/0));
-  EXPECT_EQ(stats.differential_inputs, 0u);
-  EXPECT_EQ(stats.completed_modes, 0u);
-  EXPECT_EQ(stats.budget_limited_modes, 0u);
-  EXPECT_EQ(stats.terminal_faulted_modes, stats.modes);
-  EXPECT_EQ(stats.incomplete_inputs, 1u);
 }
 
 TEST(ConcurrentDispatchFuzzTest, TerminalFaultDropsBlockedSuccessorAndReleasesPrimary) {
