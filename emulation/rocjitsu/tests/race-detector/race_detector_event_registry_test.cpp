@@ -139,12 +139,6 @@ TEST_F(RaceEventRegistrationTest, WaveApisRetainCapturedPcAndEncoding) {
 }
 } // namespace
 
-// ---- Retirement of completed LDS events ----
-//
-// A completed LDS event stays live until a barrier only so that other waves of
-// the workgroup can still race with it. A single-wave workgroup has no other
-// wave, so its waits retire LDS events immediately.
-
 namespace {
 constexpr uint32_t kTileBytes = 128;
 constexpr std::array kAsyncStoreObligations{

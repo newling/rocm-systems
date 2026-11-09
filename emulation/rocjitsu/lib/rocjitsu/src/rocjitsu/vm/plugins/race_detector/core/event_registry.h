@@ -22,7 +22,8 @@ namespace rocjitsu::plugins::race_detector {
 /// periodically trims a prefix of dead events to bound memory growth.
 ///
 /// An event is trimmable when it can never be accessed again:
-///   - RETIRED events (explicitly retired at s_barrier via retireEvent).
+///   - RETIRED events (removed from live LDS lists by retireEvent, either at
+///     s_barrier or at wave completion in a single-wave workgroup).
 ///   - WAVE_COMPLETE events without LDS intervals: non-LDS events, and LDS
 ///     events that touch no LDS bytes, such as a tensor transfer that moves no
 ///     data. These have left all per-wave and per-register lists and were never
@@ -93,7 +94,7 @@ public:
     entries_[index(id)].status = EventStatus::WAVE_COMPLETE;
   }
 
-  /// Transition → RETIRED (s_barrier flushed this event).
+  /// Transition → RETIRED after the detector removes the event's live LDS references.
   void markRetired(EventId id) { entries_[index(id)].status = EventStatus::RETIRED; }
 
   // -- Typed accessors (all inline) --
