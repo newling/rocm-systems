@@ -4304,6 +4304,7 @@ TEST(BinaryTranslatorE2E, LshlAddU64ForRdnaNormalizesInlineAndRegisterCounts) {
     uint16_t count_selector;
     uint8_t dst;
     uint32_t expected_shift;
+    bool reuse_destination_high = false;
   };
   constexpr uint16_t kLaneCount = 256 + 4; // v4 varies per lane
   constexpr std::array cases{
@@ -4313,6 +4314,10 @@ TEST(BinaryTranslatorE2E, LshlAddU64ForRdnaNormalizesInlineAndRegisterCounts) {
       ShiftCase{248, 6, 3},        // inline 1/(2*pi)
       ShiftCase{kLaneCount, 0, 0}, // destination overlaps the shifted input
       ShiftCase{2, 2, 4},          // count in s2, destination overlaps the addend
+      ShiftCase{2, 3, 4},          // the low result overwrites the addend's high half
+      ShiftCase{128 + 2, 3, 2},    // the same overlap with an inline count
+      ShiftCase{kLaneCount, 1, 0}, // the low result overwrites the input's high half
+      ShiftCase{2, 3, 4, true},    // scratch starts at the destination's high half
   };
   constexpr std::array<uint32_t, 8> lane_shifts{0, 1, 2, 3, 4, 0, 0, 0};
   constexpr uint64_t value = 0x12345678ffffffffull;
@@ -4321,8 +4326,17 @@ TEST(BinaryTranslatorE2E, LshlAddU64ForRdnaNormalizesInlineAndRegisterCounts) {
     for (const auto &test : cases) {
       SCOPED_TRACE(::testing::Message() << arch << ", count selector " << test.count_selector);
       const auto guest = make_cdna4_v_lshl_add_u64_words(test.dst, 256, test.count_selector, 258);
-      const auto image = rocjitsu::test_support::make_minimal_amdgpu_elf_with_descriptor_after_text(
-          {guest[0], guest[1], 0xBF810000u});
+      std::vector<uint32_t> code;
+      if (test.reuse_destination_high) {
+        // Name every otherwise unused VGPR so scratch allocation must use the
+        // site-dead pair v[4:5], which overlaps the destination v[3:4].
+        for (uint16_t reg = 4; reg < 256; ++reg)
+          code.push_back(cdna4::build_vop1(cdna4::kVMovB32Vop1,
+                                           {.src0 = 128, .vdst = static_cast<uint8_t>(reg)})[0]);
+      }
+      code.insert(code.end(), {guest[0], guest[1], 0xBF810000u});
+      const auto image =
+          rocjitsu::test_support::make_minimal_amdgpu_elf_with_descriptor_after_text(code);
       const rocjitsu::AmdGpuCodeObject source(image.data(), image.size());
       rocjitsu::BinaryTranslator translator(ROCJITSU_CODE_ARCH_CDNA4, arch);
       auto result = translator.translate(source);
@@ -4331,13 +4345,22 @@ TEST(BinaryTranslatorE2E, LshlAddU64ForRdnaNormalizesInlineAndRegisterCounts) {
       ASSERT_FALSE(target.text_sections().empty());
       const auto decoded = decode_text_instructions(*target.text_sections().front(), arch);
 
+      if (test.reuse_destination_high) {
+        const auto shift = std::ranges::find_if(
+            decoded, [](const auto &inst) { return inst->mnemonic() == "v_lshlrev_b64"; });
+        ASSERT_NE(shift, decoded.end());
+        const auto scratch = (*shift)->dst_operand(0)->to_register_ref();
+        ASSERT_TRUE(scratch);
+        EXPECT_EQ(scratch->index, test.dst + 1);
+      }
+
       rocjitsu::amdgpu::GpuMemory memory("lshl_add_memory");
       rocjitsu::amdgpu::L2Cache cache("lshl_add_cache");
       rocjitsu::amdgpu::ComputeUnitCore::Config config{};
       config.arch = arch;
       config.num_wf_slots = 1;
       config.sgprs_per_wf = 102;
-      config.vgprs_per_wf = 32;
+      config.vgprs_per_wf = test.reuse_destination_high ? 256 : 32;
       auto cu = rocjitsu::amdgpu::ComputeUnitCore::create("lshl_add_cu", config, &memory, &cache);
       ASSERT_NE(cu, nullptr);
       auto *wave = cu->dispatch_wf(0, 0, config.sgprs_per_wf, config.vgprs_per_wf);

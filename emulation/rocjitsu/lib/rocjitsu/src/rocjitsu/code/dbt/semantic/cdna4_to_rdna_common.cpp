@@ -23,9 +23,13 @@
 #include "rocjitsu/isa/instruction.h"
 
 #include <array>
+#include <cstdint>
 #include <cstring>
+#include <optional>
+#include <span>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace rocjitsu {
 namespace {
@@ -335,11 +339,16 @@ ExpandResult lower_v_lshl_add_u64(const Instruction &inst, rj_code_arch_t host_a
   if (host_arch == ROCJITSU_CODE_ARCH_RDNA4 && src2_is_vcc)
     words.push_back(rdna4::build_sopp(rdna4::kSWaitAlu, {.simm16 = 0xFFFD})[0]);
 
+  // Finish the addition in scratch if writing the low result to vdst would
+  // destroy S2's high half. Keeping both halves in scratch also permits the
+  // scratch low half to overlap the final destination's high half.
+  const uint16_t add_dst = src2_is_vgpr && vdst == src2_vgpr + 1 ? shift_dst : vdst;
+
   // vdst = shift_dst + S2. v_add_co_u32 writes the carry into the dead SGPR pair,
   // then v_add_co_ci_u32 consumes it as carry-in. The low add reads the freshly
   // shifted low half.
   {
-    auto [w0, w1] = build_rdna_vop3_sdst(host_arch, add_co_u32_op, static_cast<uint8_t>(vdst),
+    auto [w0, w1] = build_rdna_vop3_sdst(host_arch, add_co_u32_op, static_cast<uint8_t>(add_dst),
                                          carry_sgpr, static_cast<uint16_t>(256 + shift_dst), src2);
     words.push_back(w0);
     words.push_back(w1);
@@ -351,10 +360,24 @@ ExpandResult lower_v_lshl_add_u64(const Instruction &inst, rj_code_arch_t host_a
 
   {
     auto [w0, w1] = build_rdna_vop3_sdst(
-        host_arch, add_co_ci_u32_op, static_cast<uint8_t>(vdst + 1), carry_sgpr,
+        host_arch, add_co_ci_u32_op, static_cast<uint8_t>(add_dst + 1), carry_sgpr,
         static_cast<uint16_t>(256 + shift_dst + 1), static_cast<uint16_t>(src2 + 1), carry_sgpr);
     words.push_back(w0);
     words.push_back(w1);
+  }
+
+  if (add_dst != vdst) {
+    for (uint16_t half = 0; half < 2; ++half) {
+      const auto move =
+          host_arch == ROCJITSU_CODE_ARCH_RDNA3
+              ? rdna3::build_vop1(rdna3::kVMovB32Vop1,
+                                  {.src0 = static_cast<uint16_t>(256 + add_dst + half),
+                                   .vdst = static_cast<uint8_t>(vdst + half)})
+              : rdna4::build_vop1(rdna4::kVMovB32Vop1,
+                                  {.src0 = static_cast<uint16_t>(256 + add_dst + half),
+                                   .vdst = static_cast<uint8_t>(vdst + half)});
+      words.insert(words.end(), move.begin(), move.end());
+    }
   }
 
   if (wait_for_scratch) {
