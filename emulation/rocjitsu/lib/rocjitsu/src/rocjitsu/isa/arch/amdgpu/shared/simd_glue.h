@@ -4409,7 +4409,7 @@ template <typename Inst, typename Op>
 /// VOP3P packed-16 ternary integer SIMD fast path. Apply all three source
 /// half selectors before the functor; op_sel_hi_2 selects the third source's
 /// high output half. Integer CLAMP retains scalar execution for exact
-/// per-half saturation. Packed integer MAD does not apply neg/neg_hi.
+/// per-half saturation. The target's integer sign-bit policy applies after selection.
 template <typename Inst, typename Op>
   requires(util::has_stdx_simd)
 [[nodiscard]] inline bool try_execute_vop3p_pk_ternary_int_simd(Inst &inst, Wavefront &wf, Op op) {

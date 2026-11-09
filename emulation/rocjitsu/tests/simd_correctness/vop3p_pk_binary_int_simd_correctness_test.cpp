@@ -14,9 +14,9 @@
 ///   v_pk_lshlrev_b16 / v_pk_lshrrev_b16 / v_pk_ashrrev_i16
 ///   v_pk_min_u16 / v_pk_max_u16 / v_pk_min_i16 / v_pk_max_i16
 ///
-/// Each 32-bit lane holds {low16, high16} packed. Default packing
-/// (op_sel = 0, op_sel_hi = 3) is what the SIMD fast path handles —
-/// non-default modes bail to scalar. The test sweeps 14 rotation seeds
+/// Each 32-bit lane holds {low16, high16} packed. Both execution paths apply
+/// source half selection before the target's integer sign-bit policy.
+/// The test sweeps 14 rotation seeds
 /// under full + partial EXEC; inputs cover overflow, sign-boundary,
 /// shift-saturation, and identical-pair cases on both halves
 /// independently.
