@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <span>
 #include <stdexcept>
@@ -173,7 +174,7 @@ TEST(ConcurrentDispatchFuzzTest, SeedCorpusCoversEveryExecutionTarget) {
   uint64_t fanout = 0;
   uint64_t barriered = 0;
   bool uses_second_owner_without_fanout = false;
-  for (const auto &seed : seeds) {
+  for (const std::vector<uint8_t> &seed : seeds) {
     const RunStats stats = run_input(seed);
     EXPECT_EQ(stats.inputs, 1u);
     EXPECT_EQ(stats.targets, 1u);

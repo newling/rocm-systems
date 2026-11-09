@@ -22,6 +22,7 @@
 #include <string>
 #include <thread>
 #include <time.h>
+#include <utility>
 #include <vector>
 
 using namespace simdojo;
@@ -511,7 +512,8 @@ ExitStatus run_with_watchdog(SimulationEngine &engine) {
     finished.store(true, std::memory_order_release);
   });
   const bool started = engine.wait_until_started();
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  const std::chrono::steady_clock::time_point deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(2);
   while (!finished.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline)
     std::this_thread::yield();
   const bool finished_on_its_own = finished.load(std::memory_order_acquire);
@@ -1418,7 +1420,8 @@ TEST(TerminationTest, FiniteMaxTicksStillAwaitsTheFirstPrimary) {
     const bool stayed_alive_while_idle = !finished.load(std::memory_order_acquire);
     engine.request_exit("external stop", 7);
 
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    const std::chrono::steady_clock::time_point deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(2);
     while (!finished.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline)
       std::this_thread::yield();
     const bool stopped_on_request = finished.load(std::memory_order_acquire);

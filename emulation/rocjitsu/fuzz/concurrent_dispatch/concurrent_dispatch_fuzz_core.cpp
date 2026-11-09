@@ -11,6 +11,7 @@
 #include "rocjitsu/config/config_loader.h"
 #include "rocjitsu/isa/arch/amdgpu/generated/cdna1/builders.h"
 #include "rocjitsu/isa/arch/amdgpu/generated/cdna1/opcodes.h"
+#include "rocjitsu/isa/arch/amdgpu/generated/cdna1/operand_types.h"
 #include "rocjitsu/isa/arch/amdgpu/generated/cdna2/builders.h"
 #include "rocjitsu/isa/arch/amdgpu/generated/cdna2/opcodes.h"
 #include "rocjitsu/isa/arch/amdgpu/generated/cdna3/builders.h"
@@ -53,6 +54,7 @@
 #include "simdojo/sim/simulation.h"
 #include "simdojo/sim/topology.h"
 #include "util/diagnostic.h"
+#include "util/result.h"
 
 #include "rocjitsu/base/rj_compiler.h"
 
@@ -70,6 +72,7 @@ RJ_DIAGNOSTIC_POP
 #include <atomic>
 #include <bit>
 #include <bitset>
+#include <cstddef>
 #include <cstdint>
 #include <format>
 #include <memory>
@@ -499,7 +502,8 @@ public:
 
 private:
   std::optional<std::size_t> packet_index(uint32_t dispatch_id) const {
-    const auto packet = std::ranges::find(dispatch_ids_, dispatch_id);
+    const std::array<uint32_t, kMaxPackets>::const_iterator packet =
+        std::ranges::find(dispatch_ids_, dispatch_id);
     if (dispatch_id == 0 || packet == dispatch_ids_.end())
       return std::nullopt;
     return static_cast<std::size_t>(packet - dispatch_ids_.begin());
@@ -641,8 +645,8 @@ ModeResult run_mode(const Scenario &scenario, const ModeConfig &mode) {
   if (loaded_result.failed())
     throw std::runtime_error("concurrent dispatch fuzz config failed: " + diagnostic.message());
   config::LoadedConfig loaded = std::move(loaded_result).value();
-  auto *soc = loaded.soc();
-  auto *memory = loaded.memory();
+  SoC *soc = loaded.soc();
+  amdgpu::GpuMemory *memory = loaded.memory();
   if (!soc || !memory || soc->num_xcds() != scenario.xcd_count)
     throw std::runtime_error("concurrent dispatch fuzz topology is incomplete");
 
@@ -673,7 +677,7 @@ ModeResult run_mode(const Scenario &scenario, const ModeConfig &mode) {
   if (scenario.prime_caches) {
     std::array<uint8_t, sizeof(uint32_t)> sink{};
     for (uint32_t xcd = 0; xcd < soc->num_xcds(); ++xcd) {
-      auto *l2 = soc->xcd(xcd)->l2_cache();
+      amdgpu::L2Cache *l2 = soc->xcd(xcd)->l2_cache();
       if (!l2)
         throw std::runtime_error("concurrent dispatch fuzz target has no L2 cache");
       for (uint32_t line = 0; line < scenario.prime_lines; ++line) {
@@ -692,13 +696,13 @@ ModeResult run_mode(const Scenario &scenario, const ModeConfig &mode) {
     throw std::runtime_error("concurrent dispatch fuzz address-space registration failed");
 
   auto observer_plugin = std::make_unique<FuzzObserver>(fuzz_address_space, *memory, scenario);
-  auto *observer = observer_plugin.get();
+  FuzzObserver *observer = observer_plugin.get();
   auto plugins = std::make_shared<ExecutionPluginGroup>(PluginSinkConfig{});
   if (!plugins->add(std::move(observer_plugin)))
     throw std::runtime_error("concurrent dispatch fuzz could not attach its observer");
   soc->set_plugin_group(plugins);
 
-  auto *owner = soc->assign_queue_owner_cp(scenario.queue_ordinal);
+  amdgpu::CommandProcessor *owner = soc->assign_queue_owner_cp(scenario.queue_ordinal);
   if (!owner)
     throw std::runtime_error("concurrent dispatch fuzz has no queue owner");
   QueueDriver queue(memory, owner, scenario.queue_ordinal + 1, scenario.xcd_fanout);

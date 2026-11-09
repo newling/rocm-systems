@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <charconv>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <exception>
@@ -34,7 +35,8 @@ using namespace rocjitsu::concurrent_dispatch_fuzz;
 
 uint64_t parse_uint64(std::string_view text) {
   uint64_t value = 0;
-  const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
+  const std::from_chars_result parsed =
+      std::from_chars(text.data(), text.data() + text.size(), value);
   if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size())
     throw std::invalid_argument("expected an unsigned integer");
   return value;
