@@ -63,7 +63,7 @@ TEST(RaceDetector, EventRegistry_LdsEventsWithoutBytesAreTrimmedOnceComplete) {
   // like a wave-local event, and must not be queued for barrier retirement.
   int N = EventRegistry::kTrimAttemptInterval;
   RaceDetector detector(/*nWaves=*/
-                        1, /*vgprCount=*/2, /*sgprCount=*/2, Dim3d(0), [](RaceViolation) {},
+                        2, /*vgprCount=*/2, /*sgprCount=*/2, Dim3d(0), [](RaceViolation) {},
                         counterCapacitiesForArch(ROCJITSU_CODE_ARCH_CDNA5),
                         /*ldsSizeBytes=*/64 * 1024);
   auto &wave = detector.getWaveRaceState(0);
