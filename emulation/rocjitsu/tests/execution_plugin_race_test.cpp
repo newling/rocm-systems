@@ -1144,10 +1144,10 @@ TEST_F(Gfx1250CounterCapacityRaceTest, LoadcntBelowCapacityKeepsOldestLoadPendin
 }
 
 // Loads and stores use separate counters on gfx1250 (CDNA5 ISA 5.7.1), so a
-// full STOREcnt says nothing about a pending load.
+// STOREcnt backpressure says nothing about a pending load.
 TEST_F(Gfx1250CounterCapacityRaceTest, StorecntPressureDoesNotCompleteALoad) {
   vmem_load(0, /*vgpr=*/0);
-  for (int index = 0; index < kCapacity; ++index)
+  for (int index = 0; index < kCapacity + 1; ++index)
     vmem_store(0);
   EXPECT_TRUE(vgpr_read(0, 0));
 }
