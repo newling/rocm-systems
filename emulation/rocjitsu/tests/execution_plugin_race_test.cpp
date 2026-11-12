@@ -46,6 +46,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -911,8 +912,9 @@ TEST_F(TensorDmaRaceTest, AsyncStoreAsynccntWithoutBarrierRacesInAnotherWave) {
   EXPECT_TRUE(ds_write(1, 32));
 }
 
-// Async copies may access LDS out of order with DS instructions, so the storing
-// wave's own DS write needs ASYNCcnt first.
+// The ISA does not establish LDS access order between async copies and DS
+// instructions. The detector therefore reports overlapping writes from the
+// storing wave until an ASYNCcnt wait completes the store.
 TEST_F(TensorDmaRaceTest, SameWaveDsWriteOverAPendingAsyncStoreSourceRaces) {
   async_store(0, 32);
   EXPECT_TRUE(ds_write(0, 32));
