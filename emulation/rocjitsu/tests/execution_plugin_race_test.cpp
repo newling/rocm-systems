@@ -1238,20 +1238,23 @@ TEST_F(Gfx1250CounterCapacityRaceTest, FlatResolvedToLdsAdvancesDscnt) {
 }
 
 // A FLAT with EXEC zero still counts on both counters unless they are all zero
-// (CDNA5 ISA 3.2.2.1).
-TEST_F(Gfx1250CounterCapacityRaceTest, FlatWithNoActiveLanesAdvancesLoadcnt) {
+// (CDNA5 ISA 3.2.2.1). Put it at issue 63 so the active issue at 64 depends on
+// retaining the masked instruction's slot after admission.
+TEST_F(Gfx1250CounterCapacityRaceTest, FlatWithNoActiveLanesHoldsALoadcntSlot) {
   vmem_load(0, /*vgpr=*/0);
-  for (int index = 0; index < kCapacity - 1; ++index)
+  for (int index = 0; index < kCapacity - 2; ++index)
     vmem_load(0, /*vgpr=*/1);
   flat_load(0, /*vgpr=*/2, FlatRoute::NoActiveLanes);
+  vmem_load(0, /*vgpr=*/1);
   EXPECT_FALSE(vgpr_read(0, 0));
 }
 
-TEST_F(Gfx1250CounterCapacityRaceTest, FlatWithNoActiveLanesAdvancesDscnt) {
+TEST_F(Gfx1250CounterCapacityRaceTest, FlatWithNoActiveLanesHoldsADscntSlot) {
   ds_read(0, kOldestAddress);
-  for (int index = 0; index < kCapacity - 1; ++index)
+  for (int index = 0; index < kCapacity - 2; ++index)
     ds_read(0, kYoungerAddress);
   flat_load(0, /*vgpr=*/2, FlatRoute::NoActiveLanes);
+  ds_read(0, kYoungerAddress);
   EXPECT_FALSE(tensor_load_oldest());
 }
 
@@ -1477,14 +1480,16 @@ TEST_F(Gfx1250CounterCapacityRaceTest, AsyncStoreDoesNotFillAsynccntWithAsyncLoa
 // An EXEC-zero instruction counts on its counters unless they are all zero, and
 // the counters are set by its encoding (CDNA5 ISA 3.2.2.1): VMEM is skipped only
 // if LOADcnt, STOREcnt, ASYNCcnt and TENSORcnt are zero, and LDS only if DScnt is.
-// So an EXEC-zero async load takes the last ASYNCcnt slot, but an EXEC-zero
+// So an EXEC-zero async load holds issue 63's ASYNCcnt slot for the active
+// issue at 64 to apply backpressure. In contrast, an EXEC-zero
 // ds_atomic_async_barrier_arrive_b64, an LDS instruction on ASYNCcnt, may be
 // skipped with DScnt zero while async loads are pending, and proves nothing.
-TEST_F(Gfx1250CounterCapacityRaceTest, ExecZeroAsyncLoadFillsAsynccnt) {
+TEST_F(Gfx1250CounterCapacityRaceTest, ExecZeroAsyncLoadHoldsAnAsynccntSlot) {
   dtl_write(0, kOldestAddress);
-  for (int index = 0; index < kCapacity - 1; ++index)
+  for (int index = 0; index < kCapacity - 2; ++index)
     dtl_write(0, kYoungerAddress);
   exec_zero_async_load(0, kYoungerAddress);
+  dtl_write(0, kYoungerAddress);
   EXPECT_FALSE(ds_read(0, kOldestAddress));
 }
 
