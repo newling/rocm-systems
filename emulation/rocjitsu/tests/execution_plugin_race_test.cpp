@@ -859,8 +859,8 @@ TEST_F(TensorDmaRaceTest, TransferWithoutLdsBytesLeavesTheLoadPendingUntilTheWai
 
 /// Drives gfx1250 counter-capacity backpressure through the plugin's hooks.
 /// Each split counter holds 63 tokens, or 31 for KMcnt (CDNA5 ISA 5.7.1);
-/// issuing one more stalls until the oldest completes, which proves it complete
-/// for its wave.
+/// issuing one more stalls until enough earlier work completes. Within an
+/// ordered completion class, this can prove its oldest operations complete.
 /// Each test issues an oldest operation and enough younger ones to fill or
 /// overflow the counter, then probes the oldest operation's register or LDS
 /// bytes. Probes are same-wave accesses in another completion class, so they

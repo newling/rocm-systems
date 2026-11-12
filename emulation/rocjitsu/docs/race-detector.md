@@ -203,19 +203,19 @@ races. Some examples:
 - **Tensor DMA races** (gfx1250): `tensor_load_to_lds` writes and
   `tensor_store_from_lds` reads are LDS events on `tensorcnt`. Any wave,
   including the issuing one, that reads a load's destination or overwrites a
-  store's source before the transfer completes, through `s_wait_tensorcnt` or a
-  full `tensorcnt`, is reported; other waves also need an `s_barrier`. A load
-  covers every element of its tile, including elements outside the tensor, which
-  it zero-fills; padding bytes are excluded. A store covers only the elements
+  store's source before the transfer completes, through `s_wait_tensorcnt` or
+  `tensorcnt` backpressure, is reported; other waves also need an `s_barrier`.
+  A load covers every element of its tile, including elements outside the tensor,
+  which it zero-fills; padding bytes are excluded. A store covers only the elements
   inside the tensor. Either way, only bytes inside the wave's LDS allocation are
   tracked, because bytes past it are not transferred: an i32 at offset 254 of a
   256-byte allocation contributes only bytes 254 and 255. Transfers from one
   wave complete on `tensorcnt` in issue order (CDNA5 ISA 10.11.1), so a partial
-  `s_wait_tensorcnt` or a full `tensorcnt` retires the oldest. The ISA does not
-  specify the relative timing of their LDS reads and writes, so as a
+  `s_wait_tensorcnt` or `tensorcnt` backpressure can retire the oldest. The ISA
+  does not specify the relative timing of their LDS reads and writes, so as a
   conservative rule the detector reports a tensor load and a tensor store from
   the same wave that touch the same LDS byte, in either order, until
-  `s_wait_tensorcnt` or a full `tensorcnt` retires the earlier one. Two stores
+  `s_wait_tensorcnt` or `tensorcnt` backpressure retires the earlier one. Two stores
   of the same tile only read it, which is safe; two loads over the same bytes
   are an LDS write/write conflict, which the detector does not check (see
   Limitations). Each instruction is registered when it issues, as other memory
@@ -376,13 +376,15 @@ These are the capacities the core memory-wait checker uses. Each counter
 constrains only its own events: STOREcnt pressure does not complete a pending
 load, and a scalar load does not complete a pending DS operation. Async loads
 and async stores share ASYNCcnt but complete in order only within their own type
-(CDNA5 ISA 10.8), so a full ASYNCcnt completes the oldest async load only when
-async loads alone fill it, and likewise for stores. Scalar loads complete out of
-order (CDNA5 ISA 5.7.1.1), so a full KMcnt never completes one. A memory
-instruction issued with wave EXEC zero counts unless the counters its encoding
-names are all zero (CDNA5 ISA 3.2.2.1): LOADcnt, STOREcnt, ASYNCcnt and
-TENSORcnt for VMEM, DScnt for LDS, and all of them for FLAT. On those counters
-it applies backpressure and keeps its slot, recorded as an event with no
+(CDNA5 ISA 10.8). An issue that needs a free slot proves at most 62 older tokens
+remain. Thus 63 pending async loads prove the oldest load complete, and likewise
+for stores; a mixed backlog of 63 proves no particular operation complete.
+Scalar loads complete out of order (CDNA5 ISA 5.7.1.1), so KMcnt backpressure
+never proves one complete. A memory instruction issued with wave EXEC zero
+counts unless the counters its encoding names are all zero (CDNA5 ISA 3.2.2.1):
+LOADcnt, STOREcnt, ASYNCcnt and TENSORcnt for VMEM, DScnt for LDS, and all of them
+for FLAT. On those counters it applies backpressure and keeps its slot, recorded
+as an event with no
 registers or LDS bytes, so later capacity checks and partial waits count it.
 That is safe even if the instruction was skipped: those counters were then zero,
 so the earlier operations on them had completed. Its other counters are left
@@ -405,7 +407,7 @@ each applies DScnt backpressure when it issues and keeps its slot in order with
 LDS operations. `ds_nop` does the same, following the core memory-wait
 checker's model, since the ISA describes it only as "Do nothing". Tensor
 DMA instructions apply TENSORcnt backpressure when they issue, before their LDS
-bytes are checked, so the oldest transfer a full TENSORcnt completes does not
+bytes are checked, so the oldest transfer that backpressure completes does not
 conflict with the new one. Every generic FLAT applies backpressure to both DScnt
 and LOADcnt or STOREcnt when it issues, whichever memory its addresses resolve
 to, because it increments both (CDNA5 ISA 5.7.1.3). The slot it takes in a
