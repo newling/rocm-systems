@@ -1062,10 +1062,9 @@ TEST_F(Gfx1250SplitBarrierHookTest, WaitPassedReportsRoundThatSetTheBit) {
                                 completed({wf1}, round1), waitPassed(wf0, round0)}));
 }
 
-// S_BARRIER_JOIN clears the joining wave's completion bit and S_BARRIER_INIT
-// discards counted signals (CDNA5 ISA 5.6.3, Table 22), so each starts a new
-// generation for the waves it affects. Wave 1 never rejoined, so its bit still
-// holds the first round.
+// S_BARRIER_JOIN clears only the joining wave's completion bit; S_BARRIER_INIT
+// discards counted signals and starts a new generation (CDNA5 ISA 5.6.3,
+// Table 22). Wave 1 never rejoined, so its bit still holds the first round.
 TEST_F(Gfx1250SplitBarrierHookTest, JoinAndInitDiscardPendingRound) {
   // Generation 0 is discarded by the first init, 1 completes, and 2 is
   // discarded by the second init.

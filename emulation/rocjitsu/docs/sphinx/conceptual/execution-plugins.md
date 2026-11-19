@@ -41,17 +41,24 @@ destination register is consumed.
 
 ### Barrier
 
-Called as waves synchronize through a barrier. Three steps are reported
-separately. A completed round *notifies* waves: `onAmdgpuBarrierResolved`
-lists them. The round *arms* the wait of each notified wave whose
-completion bit it set: `onAmdgpuBarrierRoundCompleted` lists those. A wave
-*passes* its wait: `onAmdgpuBarrierWaitPassed` names the round that
-released it. On gfx1250, where `s_barrier_signal` and `s_barrier_wait` are
-separate instructions, a wave is ordered after a round only from the
-moment it passes its wait, so plugins that track inter-wave
-synchronization update each wave's ordering state there. A target with a
-single `s_barrier` instruction reports all three steps when the barrier
-resolves.
+Called as waves synchronize through a barrier. `onAmdgpuBarrierSignaled`
+reports each signal counted toward a round. When the round completes,
+`onAmdgpuBarrierResolved` lists the waves it *notified*, and
+`onAmdgpuBarrierRoundCompleted` lists both those waves and the subset it
+*armed* by setting their completion bits. `onAmdgpuBarrierWaitPassed`
+reports each wave passing its wait and identifies the round that released it.
+
+On gfx1250 and RDNA4, `s_barrier_signal` and `s_barrier_wait` are separate
+instructions. A wave acquires a round's ordering through its wait when it
+passes that wait, so plugins update that wave's ordering state there. A
+target with a single `s_barrier` instruction reports the signal,
+completion, and passed wait together when the barrier resolves.
+
+`BarrierRound` identifies the barrier and generation within a workgroup or
+cluster. Plugins keeping shared round state must also distinguish the
+dispatch and owning workgroup or cluster. A notified wave whose completion
+bit was already set retains the earlier round; it is absent from the newer
+round's armed subset, and its next wait reports the earlier round.
 
 ### Waitcnt
 

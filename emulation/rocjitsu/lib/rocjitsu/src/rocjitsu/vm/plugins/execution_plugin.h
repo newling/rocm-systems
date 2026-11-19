@@ -76,9 +76,10 @@ public:
   virtual void onAmdgpuImageFeedbackQualified(const Instruction &inst, amdgpu::Wavefront &wf) = 0;
 };
 
-/// One round of one barrier: the signals counted between two completions.
-/// Passed to the split-barrier hooks so a plugin can match each wave's signal
-/// and wait to the round that ordered them.
+/// @brief A barrier round, delimited by completions or S_BARRIER_INIT.
+/// @details Identifies a round within its owning workgroup or cluster, not
+/// across a dispatch or device. Plugins must combine it with the dispatch and
+/// workgroup or cluster identity obtained from the callback's waves.
 struct BarrierRound {
   BarrierKind kind = BarrierKind::Workgroup;
   /// The Wavefront completion bit the round sets: 0 named, 1 workgroup,
@@ -87,7 +88,7 @@ struct BarrierRound {
   /// The named barrier ID (1-16) for a Named round, otherwise 0.
   uint32_t named_id = 0;
   /// Counts completed rounds of this barrier, and S_BARRIER_INIT, which
-  /// discards the signals counted so far. Starts at 0 for each workgroup. A
+  /// discards the signals counted so far. Starts at 0 for each barrier. A
   /// single-wave workgroup has no barrier state, so on a target with a single
   /// s_barrier instruction each of its rounds reports generation 0.
   uint64_t generation = 0;
