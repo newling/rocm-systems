@@ -2654,29 +2654,29 @@ void ComputeUnitCore::update_wf_states() {
       }
     }
     if (all_at_barrier) {
-      BarrierCompletion completion;
+      std::vector<Wavefront *> members;
       for (uint32_t other = 0; other < active_slot_limit_; ++other) {
         auto &other_wf = wfs_[other];
         if (other_wf && other_wf->dispatch_id() == did && other_wf->wg_id() == wg &&
             other_wf->state() == WfState::BARRIER &&
             other_wf->waiting_barrier_bit_ == Wavefront::kNoBarrierWait)
-          completion.members.push_back(other_wf.get());
+          members.push_back(other_wf.get());
       }
       // A single-instruction barrier is a split barrier whose signal and wait
       // coincide: every member signals, the round completes, and every member
       // passes its wait.
-      completion.armed = completion.members;
-      completion.woken = completion.members;
       auto group = barrier_wgs_.find(wg_key(did, wg));
       const uint64_t generation =
           group == barrier_wgs_.end() ? 0 : group->second.workgroup[0].generation++;
       const BarrierRound round = barrier_round(kWorkgroupBarrierBit, 0, generation);
-      for (auto *bwf : completion.members)
-        plugin_group_->onAmdgpuBarrierSignaled(*bwf, round);
-      notify_barrier_complete(*plugin_group_, completion, round);
-      for (auto *bwf : completion.members) {
-        bwf->set_state(WfState::RUNNING);
-        bwf->set_ready_cycle(cycle_counter_);
+      for (auto *member : members)
+        plugin_group_->onAmdgpuBarrierSignaled(*member, round);
+      plugin_group_->onAmdgpuBarrierRoundResolved(members, members, round);
+      for (auto *member : members)
+        plugin_group_->onAmdgpuBarrierWaitPassed(*member, round);
+      for (auto *member : members) {
+        member->set_state(WfState::RUNNING);
+        member->set_ready_cycle(cycle_counter_);
       }
     }
   }
