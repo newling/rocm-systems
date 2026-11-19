@@ -3369,3 +3369,62 @@ TEST(RaceDetector, SplitBarrier_MembersAlternatingOnOneDwordSkipAcquiredHistory)
   b.checkLdsWrite(/*wave=*/2, /*lane=*/0, kX, /*bytes=*/4);
   EXPECT_EQ(b.raceCount(), 2 * kExchanges);
 }
+
+// Two pairs use disjoint tiles. Each pair's history remains necessary for
+// detecting a later access by the other pair, even though their loop is safe.
+TEST(RaceDetector, SplitBarrier_IndependentPairsKeepHistoryForEachOther) {
+  RaceTestBuilder b(/*numWaves=*/4, /*vgprs=*/8, /*sgprs=*/8, kWave32);
+  for (int exchange = 0; exchange < kExchanges; ++exchange) {
+    for (int pair = 0; pair < 2; ++pair) {
+      const int writer = 2 * pair;
+      const int reader = writer + 1;
+      const int address = pair == 0 ? kX : kY;
+      const auto synchronize = [&](int phase) {
+        const BarrierRoundId round = RaceTestBuilder::namedRound(pair + 1, 2 * exchange + phase);
+        signalAndComplete(b, round, {writer, reader});
+        b.waitPassed(writer, round);
+        b.waitPassed(reader, round);
+      };
+      dsWrite(b, writer, address);
+      b.waitDscnt(writer, 0);
+      synchronize(0);
+      dsRead(b, reader, /*vgprDst=*/1, address);
+      b.waitDscnt(reader, 0);
+      synchronize(1);
+    }
+  }
+  EXPECT_EQ(b.raceCount(), 0);
+  b.checkLdsRead(/*wave=*/0, /*lane=*/0, kY, /*bytes=*/4);
+  EXPECT_EQ(b.raceCount(), kExchanges);
+  b.clearViolations();
+  b.checkLdsWrite(/*wave=*/2, /*lane=*/0, kX, /*bytes=*/4);
+  EXPECT_EQ(b.raceCount(), kExchanges);
+  b.clearViolations();
+  b.barrier();
+  EXPECT_EQ(b.ldsReadEventCount(), 0u);
+  EXPECT_EQ(b.ldsWriteEventCount(), 0u);
+}
+
+// Bounds must expand in both directions and cover every interval of a
+// transfer. After retirement, a new history can occupy a different tile.
+TEST(RaceDetector, SplitBarrier_HistoryBoundsKeepNewRangesAndBoundaryBytes) {
+  RaceTestBuilder b(/*numWaves=*/3, /*vgprs=*/8, /*sgprs=*/8, kWave32);
+  dsWrite(b, 0, kY);
+  b.waitDscnt(0, 0);
+  exchangeThroughNamedBarrier(b, 0);
+  b.tensorLoadToLds(0, {{.address = kX, .bytes = 4}, {.address = kY + 64, .bytes = 4}});
+  b.waitTensorcnt(0, 0);
+  for (int byte : {kX, kX + 3, kY + 64, kY + 67}) {
+    b.clearViolations();
+    b.checkLdsRead(/*wave=*/1, /*lane=*/0, byte, /*bytes=*/1);
+    expectOneLdsRace(b, /*wave=*/1, byte, /*isWrite=*/false);
+  }
+  b.clearViolations();
+  b.checkLdsRead(/*wave=*/1, /*lane=*/0, kX - 1, /*bytes=*/1);
+  b.checkLdsRead(/*wave=*/1, /*lane=*/0, kY + 68, /*bytes=*/1);
+  EXPECT_EQ(b.raceCount(), 0);
+  b.barrier();
+  b.ldsOperandRead(/*wave=*/0, /*lane=*/0, /*addr=*/0, /*bytes=*/4);
+  b.checkLdsWrite(/*wave=*/1, /*lane=*/0, /*addr=*/3, /*bytes=*/1);
+  expectOneLdsRace(b, /*wave=*/1, /*addr=*/3, /*isWrite=*/true);
+}

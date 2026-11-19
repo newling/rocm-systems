@@ -355,9 +355,10 @@ void RaceDetector::retireEvent(EventId eventId) {
 }
 
 template <typename Visit>
-void RaceDetector::forEachUnacquiredLdsEvent(WaveId accessor, Visit visit) const {
+void RaceDetector::forEachUnacquiredLdsEvent(WaveId accessor, int start, int end,
+                                             Visit visit) const {
   for (const WaveRaceState &owner : waveRaceStates) {
-    if (owner.getWaveId() == accessor)
+    if (owner.getWaveId() == accessor || !owner.barrierPendingMayOverlap(start, end))
       continue;
     const uint32_t acquiredEpoch = acquired(accessor, owner.getWaveId());
     const std::vector<EventId> &history = owner.getBarrierPendingEvents();
@@ -392,7 +393,7 @@ void RaceDetector::validateRead(int addr, WaveId wave, int lane, int nBytes,
       continue;
     check(eventId);
   }
-  forEachUnacquiredLdsEvent(wave, check);
+  forEachUnacquiredLdsEvent(wave, addr, addr + nBytes, check);
 }
 
 void RaceDetector::validateWrite(int addr, WaveId wave, int lane, int nBytes,
@@ -439,7 +440,7 @@ void RaceDetector::validateWrite(int addr, WaveId wave, int lane, int nBytes,
       continue;
     check(eventId);
   }
-  forEachUnacquiredLdsEvent(wave, check);
+  forEachUnacquiredLdsEvent(wave, addr, addr + nBytes, check);
 }
 
 bool RaceDetector::mayConflict(const IntervalSet &accessed, WaveId wave, bool isWrite,

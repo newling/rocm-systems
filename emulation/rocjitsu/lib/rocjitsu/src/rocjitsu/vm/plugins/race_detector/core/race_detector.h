@@ -229,11 +229,13 @@ private:
     return acquired_[static_cast<size_t>(accessor.value) * waveCount() + owner.value];
   }
 
-  /// Call `visit` with each event of another wave whose LDS access completed
-  /// in an epoch `accessor` has not acquired. A wave's history is in epoch
+  /// Call `visit` with candidate events of other waves whose LDS access
+  /// completed in an epoch `accessor` has not acquired. Histories with bounds
+  /// disjoint from [start, end) are skipped. A wave's history is in epoch
   /// order, so these are a suffix of it, and the events a barrier has ordered
   /// before `accessor`'s access are never visited.
-  template <typename Visit> void forEachUnacquiredLdsEvent(WaveId accessor, Visit visit) const;
+  template <typename Visit>
+  void forEachUnacquiredLdsEvent(WaveId accessor, int start, int end, Visit visit) const;
 
   /// Whether a barrier has ordered another wave's completed event before
   /// `accessor`'s access.
