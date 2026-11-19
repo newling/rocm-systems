@@ -2529,9 +2529,9 @@ TEST(RaceDetector, RepeatedCheckSameRace) {
 
 // ---- Split barriers (s_barrier_signal / s_barrier_wait) ----
 //
-// A barrier orders an access before it only if the issuing wave completed the
-// access before its own signal, and orders an access after it only if the
-// accessing wave issued it after its own wait. The signal carries no memory
+// In the detector's direct signal/wait handoff, the issuing wave completes its
+// LDS access before signalling and the accessing wave waits before touching
+// those bytes. The signal carries no memory
 // wait (CDNA5 ISA 15.3, S_BARRIER_SIGNAL), and a wave waits only for the round
 // that set its completion bit (CDNA5 ISA 5.6.1).
 
