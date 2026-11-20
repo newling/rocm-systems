@@ -413,6 +413,21 @@ workgroup barrier; ordering between workgroups is not modeled. The simulator
 reports each counted signal, each completed round and each passed wait to
 plugins.
 
+The ordering recorded by a counted barrier depends on which signals reached
+its threshold in this execution. For example, A and B each complete a write
+to a different LDS tile and signal a named barrier with member count one. C
+has joined that barrier and waits once, then reads only A's tile. If A's
+signal completed the round C acquires, the read is ordered; if B's signal
+completed it, the detector reports a race with A. Reading both tiles exposes
+an unacquired producer in either order. Member count two orders both writes
+when each producer signals once and completes its write before signalling.
+
+The detector follows the executed rounds; it does not explore other legal
+signal orders. A clean run of a protocol whose contributing signals depend
+on scheduling therefore does not establish that its other schedules are
+race-free. This limitation can arise with ordinary signal/wait instructions,
+without polling or another unmodeled synchronization mechanism.
+
 A completed LDS event stays in the history, and is still checked, until every
 other live wave of the workgroup has acquired it. A workgroup in which some
 wave never passes a barrier wait, or whose waves synchronize only through
