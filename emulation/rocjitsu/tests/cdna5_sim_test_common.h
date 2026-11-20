@@ -62,6 +62,7 @@
 #include <format>
 #include <memory>
 #include <optional>
+#include <ostream>
 #include <set>
 #include <shared_mutex>
 #include <string>

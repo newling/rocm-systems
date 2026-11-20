@@ -3661,7 +3661,8 @@ TEST(Gfx1250ExecutionTest, LdsBarrierCellArriveCompletesPhaseOnRollUnder) {
 /// One wave with a 256-byte LDS allocation, for executing the DS barrier
 /// arrive instructions directly. VGPR 0 holds each lane's cell address and
 /// VGPRs 2-3 its 64-bit update value; the RTN form returns to VGPRs 4-5.
-struct LdsBarrierArriveTest : testing::Test {
+class LdsBarrierArriveTest : public testing::Test {
+protected:
   using Source = amdgpu::LdsBarrierArrivalObservation::Source;
 
   void SetUp() override {
