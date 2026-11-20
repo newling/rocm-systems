@@ -36,7 +36,7 @@ RaceDetector::RaceDetector(int nWaves, int vgprCount, int sgprCount, Dim3d workg
   exitClock_.assign(nWaves, 0);
   ended_.assign(nWaves, false);
   // With no other wave, nothing holds back retirement.
-  covered_.assign(nWaves, nWaves == 1 ? std::numeric_limits<uint32_t>::max() : 0);
+  covered_.assign(nWaves, nWaves == 1 ? std::numeric_limits<BarrierEpoch>::max() : 0);
   atCoverage_.assign(nWaves, nWaves - 1);
   staleCoverage_.assign(nWaves, false);
   liveWaves_ = nWaves;
@@ -114,7 +114,7 @@ void RaceDetector::stampReleaseEpoch(EventId eventId) {
 namespace {
 
 /// Join `from` into `into`, element-wise maximum.
-void joinClock(std::span<uint32_t> into, std::span<const uint32_t> from) {
+void joinClock(std::span<BarrierEpoch> into, std::span<const BarrierEpoch> from) {
   for (size_t index = 0; index < into.size(); ++index)
     into[index] = std::max(into[index], from[index]);
 }
@@ -274,9 +274,9 @@ void RaceDetector::stopAwaiting(WaveId wave, std::optional<uint8_t> barrier) {
   }
 }
 
-void RaceDetector::acquire(WaveId accessor, std::span<const uint32_t> clock) {
+void RaceDetector::acquire(WaveId accessor, std::span<const BarrierEpoch> clock) {
   for (int owner = 0; owner < waveCount(); ++owner) {
-    uint32_t &entry = acquired(accessor, WaveId{owner});
+    BarrierEpoch &entry = acquired(accessor, WaveId{owner});
     if (clock[owner] <= entry)
       continue;
     const bool wasAtCoverage = owner != accessor.value && entry == covered_[owner];
@@ -293,12 +293,12 @@ void RaceDetector::leaveCoverageMinimum(WaveId owner) {
 }
 
 void RaceDetector::recomputeCoverage(WaveId owner) {
-  uint32_t covered = std::numeric_limits<uint32_t>::max();
+  BarrierEpoch covered = std::numeric_limits<BarrierEpoch>::max();
   int atCoverage = 0;
   for (int accessor = 0; accessor < waveCount(); ++accessor) {
     if (accessor == owner.value || ended_[accessor])
       continue;
-    const uint32_t entry = acquired(WaveId{accessor}, owner);
+    const BarrierEpoch entry = acquired(WaveId{accessor}, owner);
     if (entry < covered) {
       covered = entry;
       atCoverage = 1;
@@ -313,7 +313,7 @@ void RaceDetector::recomputeCoverage(WaveId owner) {
 
 bool RaceDetector::ordered(WaveId accessor, EventId eventId) const {
   // An event has a release epoch once its LDS access has completed.
-  const uint32_t releaseEpoch = events_.releaseEpoch(eventId);
+  const BarrierEpoch releaseEpoch = events_.releaseEpoch(eventId);
   return releaseEpoch != 0 && acquired(accessor, events_.waveId(eventId)) >= releaseEpoch;
 }
 
@@ -359,7 +359,7 @@ void RaceDetector::forEachUnacquiredLdsEvent(WaveId accessor, Visit visit) const
   for (const WaveRaceState &owner : waveRaceStates) {
     if (owner.getWaveId() == accessor)
       continue;
-    const uint32_t acquiredEpoch = acquired(accessor, owner.getWaveId());
+    const BarrierEpoch acquiredEpoch = acquired(accessor, owner.getWaveId());
     const std::vector<EventId> &history = owner.getBarrierPendingEvents();
     for (auto event = history.rbegin();
          event != history.rend() && events_.releaseEpoch(*event) > acquiredEpoch; ++event)

@@ -55,7 +55,7 @@ TEST(RaceDetector, EventRegistry_TrimmedWaveLocalEventsAreNotBarrierQueued) {
   // If wave-local events were incorrectly queued for barrier retirement, this
   // would be non-empty. Flushing it after trimming would then touch stale ids.
   EXPECT_TRUE(wave.getBarrierPendingEvents().empty());
-  wave.retireReleasedThrough(std::numeric_limits<uint32_t>::max());
+  wave.retireReleasedThrough(std::numeric_limits<BarrierEpoch>::max());
 }
 
 TEST(RaceDetector, EventRegistry_LdsEventsWithoutBytesAreTrimmedOnceComplete) {
@@ -204,6 +204,32 @@ TEST(EventRegistry, RetainsCapturedInstruction) {
   EXPECT_EQ(events.instruction(id), kInstruction);
 }
 
+TEST(EventRegistry, LargeReleaseEpochSurvivesHistoryCompaction) {
+  EventRegistry events;
+  IntervalSet bytes;
+  bytes.append(64, 68);
+  const auto read = events.add(WaveId{0}, kInstruction, MemoryEventType::LDS_OPERAND_READ, {}, 0, 0,
+                               std::move(bytes), {}, MemoryOrderClass::UNORDERED);
+  const uint64_t epoch = uint64_t{1} << 32;
+  events.setReleaseEpoch(read, epoch);
+  EXPECT_EQ(events.releaseEpoch(read), epoch);
+
+  // Move the completed LDS event out of the dense registry while retaining
+  // its full epoch for the history scan and later retirement.
+  for (int index = 0; index < 2 * EventRegistry::kTrimAttemptInterval; ++index) {
+    const auto load = events.add(WaveId{0}, kInstruction, MemoryEventType::GLOBAL_TO_VGPR, {2}, 1,
+                                 0xf, {}, kObligations, MemoryOrderClass::UNORDERED);
+    events.markRetired(load);
+  }
+  ASSERT_GT(events.trimmedCount(), 0);
+  ASSERT_TRUE(events.contains(read));
+  EXPECT_EQ(events.releaseEpoch(read), epoch);
+  EXPECT_EQ(events.status(read), EventStatus::WAVE_COMPLETE);
+  EXPECT_FALSE(events.isTrimmable(read));
+  events.markRetired(read);
+  EXPECT_FALSE(events.contains(read));
+}
+
 TEST_F(RaceEventRegistrationTest, WaveApisRetainCapturedPcAndEncoding) {
   auto &wave = detector.getWaveRaceState(0);
   const std::array<uint32_t, 1> addresses{8};
@@ -307,7 +333,7 @@ TEST(RaceDetector, MultiWave_CompletedLdsEventsStayLiveUntilABarrier) {
   detector->validateWrite(/*addr=*/0, WaveId{1}, /*lane=*/0, /*nBytes=*/4, MemoryOrderClass::LDS);
   EXPECT_EQ(violations.size(), 1u);
 
-  wave.retireReleasedThrough(std::numeric_limits<uint32_t>::max());
+  wave.retireReleasedThrough(std::numeric_limits<BarrierEpoch>::max());
   EXPECT_EQ(detector->events().status(EventId{0}), EventStatus::RETIRED);
   EXPECT_EQ(detector->events().status(EventId{1}), EventStatus::RETIRED);
   EXPECT_EQ(detector->liveLdsReadEvents(), 0u);

@@ -247,7 +247,7 @@ public:
   /// Retire the LDS events of this wave whose LDS access completed in barrier
   /// epochs up to `epoch`. Events are kept in that order, so these are a
   /// prefix.
-  void retireReleasedThrough(uint32_t epoch);
+  void retireReleasedThrough(BarrierEpoch epoch);
 
   /// Check a synchronous VALU source against older writers and remember the
   /// completed read until a barrier publishes it to peer waves.

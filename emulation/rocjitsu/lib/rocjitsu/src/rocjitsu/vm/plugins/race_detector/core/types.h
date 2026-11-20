@@ -42,6 +42,10 @@ struct EventId {
   bool operator<(EventId o) const { return value < o.value; }
 };
 
+/// Signals advance this even without allocating memory events. Keep event
+/// stamps and all clock entries at the same width. Zero means not completed.
+using BarrierEpoch = uint64_t;
+
 /// Identifies one round of one barrier within a workgroup: the signals counted
 /// between two completions. Waves release into a round when they signal it and
 /// acquire it when they pass the wait it released.

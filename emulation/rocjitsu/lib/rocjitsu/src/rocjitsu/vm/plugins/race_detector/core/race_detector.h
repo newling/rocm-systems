@@ -215,17 +215,17 @@ private:
     /// Bit per wave whose signal was counted toward the round.
     uint64_t signalled = 0;
     /// Per wave, the highest epoch released into the round.
-    std::vector<uint32_t> clock;
+    std::vector<BarrierEpoch> clock;
   };
 
   int waveCount() const { return static_cast<int>(waveRaceStates.size()); }
 
   /// Highest epoch of `owner` that `accessor` has acquired. A wave's own
   /// entry is its current epoch.
-  uint32_t &acquired(WaveId accessor, WaveId owner) {
+  BarrierEpoch &acquired(WaveId accessor, WaveId owner) {
     return acquired_[static_cast<size_t>(accessor.value) * waveCount() + owner.value];
   }
-  uint32_t acquired(WaveId accessor, WaveId owner) const {
+  BarrierEpoch acquired(WaveId accessor, WaveId owner) const {
     return acquired_[static_cast<size_t>(accessor.value) * waveCount() + owner.value];
   }
 
@@ -250,7 +250,7 @@ private:
 
   /// Raise `accessor`'s acquired epoch of each owner to at least `clock`'s,
   /// retiring the events that every other live wave has now acquired.
-  void acquire(WaveId accessor, std::span<const uint32_t> clock);
+  void acquire(WaveId accessor, std::span<const BarrierEpoch> clock);
 
   /// A wave at `owner`'s coverage minimum raised its entry, so `owner`'s
   /// events it was holding back may now be retirable.
@@ -320,10 +320,10 @@ private:
   std::vector<WaveRaceState> waveRaceStates;
 
   /// waveCount() x waveCount() vector clock, row-major by acquiring wave.
-  std::vector<uint32_t> acquired_;
+  std::vector<BarrierEpoch> acquired_;
   /// Per owner, the lowest epoch of it that every other live wave has
   /// acquired; its completed events up to that epoch are retired.
-  std::vector<uint32_t> covered_;
+  std::vector<BarrierEpoch> covered_;
   /// Per owner, how many other live waves have acquired exactly covered_.
   std::vector<int> atCoverage_;
   /// Owners whose last wave at covered_ ended. Their coverage is recomputed,
@@ -335,7 +335,7 @@ private:
   bool hasStaleCoverage_ = false;
   int liveWaves_ = 0;
   /// The join of the clocks of the waves that ended.
-  std::vector<uint32_t> exitClock_;
+  std::vector<BarrierEpoch> exitClock_;
   /// Bit per wave that ended.
   uint64_t endedWaves_ = 0;
   std::vector<bool> ended_;

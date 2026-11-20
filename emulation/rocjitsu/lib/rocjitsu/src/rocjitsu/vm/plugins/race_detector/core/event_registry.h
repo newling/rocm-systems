@@ -73,7 +73,7 @@ class EventRegistry {
     /// The owning wave's barrier epoch when the event's LDS access completed,
     /// or 0 until it has. The wave's next barrier signal releases the event to
     /// other waves.
-    uint32_t releaseEpoch = 0;
+    BarrierEpoch releaseEpoch = 0;
   };
 
 public:
@@ -345,8 +345,8 @@ public:
   }
   /// Record the owning wave's barrier epoch at which the event's LDS access
   /// completed.
-  void setReleaseEpoch(EventId id, uint32_t epoch) { get(id).releaseEpoch = epoch; }
-  uint32_t releaseEpoch(EventId id) const { return get(id).releaseEpoch; }
+  void setReleaseEpoch(EventId id, BarrierEpoch epoch) { get(id).releaseEpoch = epoch; }
+  BarrierEpoch releaseEpoch(EventId id) const { return get(id).releaseEpoch; }
 
   uint64_t registerLanes(EventId id, uint32_t reg, uint8_t bytes = 0xf) const {
     const auto &event = get(id);

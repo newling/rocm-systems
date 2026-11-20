@@ -525,7 +525,7 @@ void WaveRaceState::queueForBarrier(EventId eventId) {
   barrierPendingEvents.push_back(eventId);
 }
 
-void WaveRaceState::retireReleasedThrough(uint32_t epoch) {
+void WaveRaceState::retireReleasedThrough(BarrierEpoch epoch) {
   size_t retired = 0;
   bool retiredOperandRead = false;
   while (retired < barrierPendingEvents.size() &&
