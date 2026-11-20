@@ -314,13 +314,13 @@ private:
   bool anyCheckedLdsEvent(WaveId accessor, bool isWrite, MemoryOrderClass currentMemoryOrder,
                           int start, int end, Matches matches) const;
 
+  void attachLdsRead(EventId id, IntervalSet bytes, bool barrierArrive);
+
   /// Whether `matches` holds for any attached LDS read that a write by
   /// `accessor` has to be checked against: all but the accessor's own that are
   /// ordered with the write, and another wave's that a barrier has ordered
   /// before it or that was handed off to the accessor. Stops at the first read
   /// for which `matches` returns true.
-  void attachLdsRead(EventId id, IntervalSet bytes, bool barrierArrive);
-
   template <typename Matches>
   bool anyCheckedAttachedRead(WaveId accessor, MemoryOrderClass currentMemoryOrder,
                               Matches matches) const;

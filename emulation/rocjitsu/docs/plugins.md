@@ -627,8 +627,8 @@ instruction step and after `onAmdgpuMemoryAccessRouted`; with EXEC zero they
 report nothing. `ds_atomic_barrier_arrive_rtn_b64` with an update value of zero
 reads the cell without arriving, and is reported with `old_state` equal to
 `new_state`. A tensor DMA instruction whose descriptor requests an arrival
-reports one, after `onAmdgpuTensorDmaIssued` and after the transfer has written
-LDS, with `wf` the wavefront that issued it; it ignores EXEC (CDNA5 ISA
+reports one, after `onAmdgpuTensorDmaIssued` and after the transfer's LDS
+accesses, with `wf` the wavefront that issued it; it ignores EXEC (CDNA5 ISA
 10.11.1), and reports nothing only for a NULL descriptor. A transfer that
 waits for memory arrives when it resumes, outside any instruction step of its
 wavefront and before that wavefront issues another instruction. Consumers must

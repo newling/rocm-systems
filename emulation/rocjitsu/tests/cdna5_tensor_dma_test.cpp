@@ -3839,7 +3839,7 @@ TEST_F(LdsBarrierArriveTest, ArrivalIsNotReportedToAPluginThatDoesNotObserveIt) 
 
 // A tensor DMA instruction whose descriptor requests it arrives once, when the
 // transfer completes (CDNA5 ISA 10.11.3): after the issue observation and the
-// transfer's LDS writes, and before the completed-access observation. "The
+// transfer's LDS accesses, and before the completed-access observation. "The
 // EXEC mask is ignored: tensor instructions are issued no matter if EXEC==0 or
 // not" (CDNA5 ISA 10.11.1), so the arrival is reported with EXEC zero too.
 TEST_F(LdsBarrierArriveTest, TensorTransferArrivesAfterItIssuesAndMovesItsData) {

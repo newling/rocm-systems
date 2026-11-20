@@ -315,7 +315,7 @@ public:
   /// ds_atomic_barrier_arrive_rtn_b64 with an update value of zero reads the
   /// cell without arriving, and is reported with `old_state == new_state`. A
   /// tensor DMA instruction whose descriptor requests an arrival reports one,
-  /// after onAmdgpuTensorDmaIssued() and after the transfer has written LDS;
+  /// after onAmdgpuTensorDmaIssued() and after the transfer's LDS accesses;
   /// `wf` is the wave that issued the transfer. A tensor instruction ignores
   /// EXEC (CDNA5 ISA 10.11.1) and reports nothing only for a NULL descriptor.
   /// A transfer deferred until its memory is available arrives when it
